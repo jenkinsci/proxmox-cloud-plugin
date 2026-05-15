@@ -1,0 +1,183 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form" xmlns:c="/lib/credentials">
+
+    <f:entry>
+        <j:choose>
+            <j:when test="${it.configManaged}">
+                <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:4px;">
+                    <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.85em; font-weight:600;
+                                 background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7;">
+                        Config Managed
+                    </span>
+                    <j:if test="${it.lastUpdateDisplay != ''}">
+                        <span style="color:#888; font-size:0.85em;">
+                            Last synced: ${it.lastUpdateDisplay}
+                        </span>
+                    </j:if>
+                </div>
+                <j:if test="${it.manuallyModified}">
+                    <div style="margin-top:4px; padding:4px 8px; border-radius:4px; font-size:0.85em;
+                                background:#fff3e0; color:#e65100; border:1px solid #ffcc80;">
+                        Manually modified at ${it.manualModificationDisplay}.
+                        Changes will be overwritten on next sync.
+                    </div>
+                </j:if>
+                <j:if test="${it.configReadOnly}">
+                    <div style="margin-top:4px; color:#888; font-size:0.85em;">
+                        Manual changes are disabled. Enable "Allow manual changes" in Config Sync settings to edit.
+                    </div>
+                </j:if>
+            </j:when>
+            <j:otherwise>
+                <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:4px;">
+                    <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.85em; font-weight:600;
+                                 background:#e3f2fd; color:#1565c0; border:1px solid #90caf9;">
+                        Manually Configured
+                    </span>
+                    <j:if test="${it.lastUpdateDisplay != ''}">
+                        <span style="color:#888; font-size:0.85em;">
+                            Last saved: ${it.lastUpdateDisplay}
+                        </span>
+                    </j:if>
+                </div>
+            </j:otherwise>
+        </j:choose>
+    </f:entry>
+
+    <j:choose>
+        <j:when test="${it.configReadOnly}">
+            <f:entry title="Name">
+                <div class="setting-main">
+                    <input type="text" value="${it.name}" disabled="disabled"
+                           class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                </div>
+            </f:entry>
+            <f:entry title="API URL">
+                <div class="setting-main">
+                    <input type="text" value="${it.apiUrl}" disabled="disabled"
+                           class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                </div>
+            </f:entry>
+            <f:entry title="Credentials">
+                <div class="setting-main">
+                    <input type="text" value="${it.credentialsId}" disabled="disabled"
+                           class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                </div>
+            </f:entry>
+            <f:entry title="Ignore SSL Errors">
+                <div class="setting-main">
+                    <input type="checkbox" disabled="disabled" checked="${it.ignoreSslErrors ? 'checked' : null}"
+                           style="cursor:not-allowed;"/>
+                </div>
+            </f:entry>
+            <f:advanced>
+                <f:entry title="Instance Cap">
+                    <div class="setting-main">
+                        <input type="text" value="${it.instanceCap}" disabled="disabled"
+                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                    </div>
+                </f:entry>
+                <f:entry title="Operation Timeout (seconds)">
+                    <div class="setting-main">
+                        <input type="text" value="${it.operationTimeout}" disabled="disabled"
+                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                    </div>
+                </f:entry>
+                <f:entry title="Start VM ID">
+                    <div class="setting-main">
+                        <input type="text" value="${it.startVmId}" disabled="disabled"
+                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                    </div>
+                </f:entry>
+                <f:entry title="Cleanup Orphaned Agents">
+                    <div class="setting-main">
+                        <input type="checkbox" disabled="disabled" checked="${it.cleanupOrphanedAgents ? 'checked' : null}"
+                               style="cursor:not-allowed;"/>
+                    </div>
+                </f:entry>
+            </f:advanced>
+            <f:entry title="Agent Templates">
+                <j:forEach var="template" items="${it.templates}">
+                    <f:section title="${template.name}">
+                        <f:entry title="Node">
+                            <div class="setting-main">
+                                <input type="text" value="${template.node}" disabled="disabled"
+                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                            </div>
+                        </f:entry>
+                        <f:entry title="Template VM ID">
+                            <div class="setting-main">
+                                <input type="text" value="${template.templateVmId}" disabled="disabled"
+                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                            </div>
+                        </f:entry>
+                        <f:entry title="Labels">
+                            <div class="setting-main">
+                                <input type="text" value="${template.labelString}" disabled="disabled"
+                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                            </div>
+                        </f:entry>
+                        <f:entry title="Executors">
+                            <div class="setting-main">
+                                <input type="text" value="${template.numExecutors}" disabled="disabled"
+                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                            </div>
+                        </f:entry>
+                    </f:section>
+                </j:forEach>
+            </f:entry>
+        </j:when>
+        <j:otherwise>
+            <f:invisibleEntry>
+                <f:textbox field="configManaged"/>
+            </f:invisibleEntry>
+            <f:invisibleEntry>
+                <f:textbox field="lastSyncTimestamp"/>
+            </f:invisibleEntry>
+
+            <f:entry title="Name" field="name">
+                <f:textbox/>
+            </f:entry>
+
+            <f:entry title="API URL" field="apiUrl">
+                <f:textbox default="https://proxmox:8006"/>
+            </f:entry>
+
+            <f:entry title="Credentials" field="credentialsId">
+                <c:select/>
+            </f:entry>
+
+            <f:entry title="Ignore SSL Errors" field="ignoreSslErrors">
+                <f:checkbox default="true"/>
+            </f:entry>
+
+            <f:validateButton title="Test Connection" progress="Testing..."
+                              method="testConnection"
+                              with="apiUrl,credentialsId,ignoreSslErrors"/>
+
+            <f:advanced>
+                <f:entry title="Instance Cap" field="instanceCap">
+                    <f:textbox default="0"/>
+                </f:entry>
+
+                <f:entry title="Operation Timeout (seconds)" field="operationTimeout">
+                    <f:textbox default="300"/>
+                </f:entry>
+
+                <f:entry title="Start VM ID (0 = default)" field="startVmId">
+                    <f:textbox default="0"/>
+                </f:entry>
+
+                <f:entry title="Cleanup Orphaned Agents" field="cleanupOrphanedAgents">
+                    <f:checkbox default="false"/>
+                </f:entry>
+            </f:advanced>
+
+            <f:entry title="Agent Templates">
+                <f:repeatableProperty field="templates" header="Template"
+                                      add="Add Template"/>
+            </f:entry>
+        </j:otherwise>
+    </j:choose>
+
+</j:jelly>

@@ -1,0 +1,548 @@
+package org.jenkinsci.plugins.proxmox.config;
+
+import hudson.model.Node;
+import hudson.slaves.Cloud;
+import jenkins.model.Jenkins;
+import org.jenkinsci.plugins.proxmox.ProxmoxCloud;
+import org.jenkinsci.plugins.proxmox.ProxmoxTemplate;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.jvnet.hudson.test.JenkinsRule;
+import org.yaml.snakeyaml.Yaml;
+
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.Assert.*;
+
+public class ProxmoxConfigLoaderTest {
+
+    @Rule
+    public JenkinsRule j = new JenkinsRule();
+
+    private ProxmoxConfigLoader loader;
+
+    @Before
+    public void setUp() {
+        loader = new ProxmoxConfigLoader();
+    }
+
+    private Map<String, Object> loadYaml(String classpathPath) {
+        Yaml yaml = new Yaml();
+        InputStream is = getClass().getClassLoader().getResourceAsStream(classpathPath);
+        assertNotNull("Test resource not found: " + classpathPath, is);
+        return yaml.load(is);
+    }
+
+    // ---- createConfigFromYaml tests ----
+
+    @Test
+    public void createConfigFromYaml_mergesCloudDefaults() {
+        Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
+        List<String> warnings = new ArrayList<>();
+
+        Map<String, Map<String, Object>> result = loader.createConfigFromYaml(yamlData, warnings);
+
+        assertEquals(1, result.size());
+        assertTrue(result.containsKey("testCluster"));
+        Map<String, Object> cloud = result.get("testCluster");
+        assertEquals("Test Proxmox Cloud", cloud.get("name"));
+        assertEquals("https://proxmox.example.com:8006", cloud.get("apiUrl"));
+        assertEquals("proxmox-api-token", cloud.get("credentialsId"));
+        assertEquals(true, cloud.get("ignoreSslErrors"));
+        assertEquals(10, cloud.get("instanceCap"));
+        assertEquals(300, cloud.get("operationTimeoutSec"));
+    }
+
+    @Test
+    public void createConfigFromYaml_agentThreeLevelInheritance() {
+        Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
+        List<String> warnings = new ArrayList<>();
+
+        Map<String, Map<String, Object>> result = loader.createConfigFromYaml(yamlData, warnings);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> agentList =
+                (List<Map<String, Object>>) result.get("testCluster").get("agentList");
+        assertEquals(2, agentList.size());
+
+        Map<String, Object> linuxBuilder = agentList.stream()
+                .filter(a -> "linux-builder".equals(a.get("name")))
+                .findFirst().orElseThrow();
+
+        // From agentDefaults
+        assertEquals("FULL", linuxBuilder.get("cloneStrategy"));
+        assertEquals("/home/ubuntu/agent", linuxBuilder.get("remoteFs"));
+        assertEquals("ssh-key", linuxBuilder.get("credentialsId"));
+        assertEquals("ubuntu", linuxBuilder.get("ciUser"));
+        assertEquals("OPENJDK_21", linuxBuilder.get("javaVersion"));
+
+        // From agentDefaults-pve1
+        assertEquals("local-lvm", linuxBuilder.get("targetStorage"));
+        assertEquals("vmbr0", linuxBuilder.get("networkBridge"));
+
+        // From specific config (overrides agentDefaults)
+        assertEquals(8, linuxBuilder.get("cores"));
+        assertEquals(16384, linuxBuilder.get("memoryMb"));
+        assertEquals("linux docker", linuxBuilder.get("labelString"));
+        assertEquals(2, linuxBuilder.get("numExecutors"));
+
+        // templateVmId: specific overrides agentDefaults-pve1 (9000)
+        // linux-builder doesn't specify templateVmId, so it gets 9000 from node defaults
+        assertEquals(9000, linuxBuilder.get("templateVmId"));
+    }
+
+    @Test
+    public void createConfigFromYaml_agentOverridesNodeDefaults() {
+        Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
+        List<String> warnings = new ArrayList<>();
+
+        Map<String, Map<String, Object>> result = loader.createConfigFromYaml(yamlData, warnings);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> agentList =
+                (List<Map<String, Object>>) result.get("testCluster").get("agentList");
+
+        Map<String, Object> arm64Builder = agentList.stream()
+                .filter(a -> "arm64-builder".equals(a.get("name")))
+                .findFirst().orElseThrow();
+
+        // arm64-builder overrides templateVmId from node defaults (9000 → 9001)
+        assertEquals(9001, arm64Builder.get("templateVmId"));
+        // Still gets targetStorage from node defaults
+        assertEquals("local-lvm", arm64Builder.get("targetStorage"));
+    }
+
+    @Test
+    public void createConfigFromYaml_agentLinkedToMultipleClouds() {
+        Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-multi-cloud.yaml");
+        List<String> warnings = new ArrayList<>();
+
+        Map<String, Map<String, Object>> result = loader.createConfigFromYaml(yamlData, warnings);
+
+        assertEquals(2, result.size());
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cloud1Agents =
+                (List<Map<String, Object>>) result.get("cloud1").get("agentList");
+        assertEquals(1, cloud1Agents.size());
+        assertEquals("builder-both", cloud1Agents.get(0).get("name"));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cloud2Agents =
+                (List<Map<String, Object>>) result.get("cloud2").get("agentList");
+        assertEquals(2, cloud2Agents.size());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void createConfigFromYaml_missingCloudIdThrows() {
+        Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-invalid-cloudid.yaml");
+        List<String> warnings = new ArrayList<>();
+        loader.createConfigFromYaml(yamlData, warnings);
+    }
+
+    @Test
+    public void createConfigFromYaml_missingNodeDefaultsWarns() {
+        Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-minimal.yaml");
+        List<String> warnings = new ArrayList<>();
+
+        Map<String, Map<String, Object>> result = loader.createConfigFromYaml(yamlData, warnings);
+
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("agentDefaults-pve1"));
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    public void createConfigFromYaml_nullDefaultSectionsUsesEmptyMap() {
+        Map<String, Object> yamlData = new LinkedHashMap<>();
+        yamlData.put("cloudConfigurations", Map.of("c1", Map.of("name", "Cloud 1", "apiUrl", "https://x:8006")));
+        yamlData.put("agentConfigurations", Map.of("a1",
+                Map.of("cloudIds", List.of("c1"), "name", "agent1", "node", "n1",
+                       "templateVmId", 100, "labelString", "x", "numExecutors", 1)));
+
+        List<String> warnings = new ArrayList<>();
+        Map<String, Map<String, Object>> result = loader.createConfigFromYaml(yamlData, warnings);
+
+        assertEquals(1, result.size());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> agents =
+                (List<Map<String, Object>>) result.get("c1").get("agentList");
+        assertEquals(1, agents.size());
+        assertEquals("agent1", agents.get(0).get("name"));
+    }
+
+    // ---- createProxmoxCloud tests ----
+
+    @Test
+    public void createProxmoxCloud_validConfig() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "My Cloud");
+        config.put("apiUrl", "https://proxmox.example.com:8006");
+        config.put("credentialsId", "my-creds");
+        config.put("ignoreSslErrors", false);
+        config.put("instanceCap", 20);
+        config.put("operationTimeoutSec", 600);
+        config.put("startVmId", 1000);
+        config.put("cleanupOrphanedAgents", true);
+
+        ProxmoxCloud cloud = loader.createProxmoxCloud(config);
+
+        assertEquals("My Cloud", cloud.name);
+        assertEquals("https://proxmox.example.com:8006", cloud.getApiUrl());
+        assertEquals("my-creds", cloud.getCredentialsId());
+        assertFalse(cloud.isIgnoreSslErrors());
+        assertEquals(20, cloud.getInstanceCap());
+        assertEquals(600, cloud.getOperationTimeout());
+        assertEquals(1000, cloud.getStartVmId());
+        assertTrue(cloud.isCleanupOrphanedAgents());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void createProxmoxCloud_missingNameThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("apiUrl", "https://proxmox.example.com:8006");
+        loader.createProxmoxCloud(config);
+    }
+
+    @Test
+    public void createProxmoxCloud_minimalConfig() {
+        Map<String, Object> config = Map.of("name", "Minimal Cloud");
+
+        ProxmoxCloud cloud = loader.createProxmoxCloud(config);
+
+        assertEquals("Minimal Cloud", cloud.name);
+        assertNull(cloud.getApiUrl());
+        assertNull(cloud.getCredentialsId());
+        assertTrue(cloud.isIgnoreSslErrors());
+        assertEquals(0, cloud.getInstanceCap());
+        assertEquals(300, cloud.getOperationTimeout());
+        assertEquals(0, cloud.getStartVmId());
+        assertFalse(cloud.isCleanupOrphanedAgents());
+    }
+
+    // ---- createProxmoxTemplate tests ----
+
+    @Test
+    public void createProxmoxTemplate_validConfig() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "linux-builder");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9000);
+        config.put("labelString", "linux docker");
+        config.put("numExecutors", 2);
+        config.put("cloneStrategy", "LINKED");
+        config.put("targetStorage", "local-lvm");
+        config.put("targetPool", "dev-pool");
+        config.put("cores", 8);
+        config.put("memoryMb", 16384);
+        config.put("diskSizeGb", 50);
+        config.put("networkBridge", "vmbr0");
+        config.put("remoteFs", "/opt/agent");
+        config.put("mode", "NORMAL");
+        config.put("credentialsId", "ssh-key");
+        config.put("javaPath", "/usr/bin/java");
+        config.put("jvmOptions", "-Xmx512m");
+        config.put("javaVersion", "OPENJDK_21");
+        config.put("idleTerminationMinutes", 60);
+        config.put("instanceCap", 5);
+        config.put("maxTotalUses", 100);
+        config.put("namePrefix", "custom-");
+        config.put("startupWaitSeconds", 120);
+        config.put("ciUser", "admin");
+        config.put("ipConfig", "ip=10.0.0.5/24,gw=10.0.0.1");
+        config.put("nameserver", "8.8.8.8");
+        config.put("searchDomain", "example.com");
+        config.put("userDataScript", "#!/bin/bash\necho hello");
+
+        ProxmoxTemplate template = loader.createProxmoxTemplate(config);
+
+        assertEquals("linux-builder", template.getName());
+        assertEquals("pve1", template.getNode());
+        assertEquals(9000, template.getTemplateVmId());
+        assertEquals("linux docker", template.getLabelString());
+        assertEquals(2, template.getNumExecutors());
+        assertEquals(CloneStrategy.LINKED, template.getCloneStrategy());
+        assertEquals("local-lvm", template.getTargetStorage());
+        assertEquals("dev-pool", template.getTargetPool());
+        assertEquals(8, template.getCores());
+        assertEquals(16384, template.getMemory());
+        assertEquals(50, template.getDiskSizeGb());
+        assertEquals("vmbr0", template.getNetworkBridge());
+        assertEquals("/opt/agent", template.getRemoteFs());
+        assertEquals(Node.Mode.NORMAL, template.getMode());
+        assertEquals("ssh-key", template.getCredentialsId());
+        assertEquals("/usr/bin/java", template.getJavaPath());
+        assertEquals("-Xmx512m", template.getJvmOptions());
+        assertEquals(JavaInstallation.OPENJDK_21, template.getJavaVersion());
+        assertEquals(60, template.getIdleTerminationMinutes());
+        assertEquals(5, template.getInstanceCap());
+        assertEquals(100, template.getMaxTotalUses());
+        assertEquals("custom-", template.getNamePrefix());
+        assertEquals(120, template.getStartupWaitSeconds());
+        assertEquals("admin", template.getCiUser());
+        assertEquals("ip=10.0.0.5/24,gw=10.0.0.1", template.getIpConfig());
+        assertEquals("8.8.8.8", template.getNameserver());
+        assertEquals("example.com", template.getSearchDomain());
+        assertEquals("#!/bin/bash\necho hello", template.getUserDataScript());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void createProxmoxTemplate_missingNameThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("node", "pve1");
+        config.put("templateVmId", 9000);
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        loader.createProxmoxTemplate(config);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void createProxmoxTemplate_missingNodeThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "test");
+        config.put("templateVmId", 9000);
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        loader.createProxmoxTemplate(config);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void createProxmoxTemplate_missingTemplateVmIdThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "test");
+        config.put("node", "pve1");
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        loader.createProxmoxTemplate(config);
+    }
+
+    @Test
+    public void createProxmoxTemplate_onlyRequiredFields() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "basic");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9000);
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+
+        ProxmoxTemplate template = loader.createProxmoxTemplate(config);
+
+        assertEquals("basic", template.getName());
+        assertEquals("pve1", template.getNode());
+        assertEquals(9000, template.getTemplateVmId());
+        // Verify class defaults are preserved
+        assertEquals(CloneStrategy.FULL, template.getCloneStrategy());
+        assertEquals("/home/ubuntu/agent", template.getRemoteFs());
+        assertEquals(Node.Mode.EXCLUSIVE, template.getMode());
+        assertEquals("java", template.getJavaPath());
+        assertEquals(JavaInstallation.NONE, template.getJavaVersion());
+        assertEquals(30, template.getIdleTerminationMinutes());
+        assertEquals(0, template.getInstanceCap());
+        assertEquals(0, template.getMaxTotalUses());
+        assertEquals("jenkins-agent-", template.getNamePrefix());
+        assertEquals(60, template.getStartupWaitSeconds());
+    }
+
+    @Test
+    public void createProxmoxTemplate_enumParsing() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "test");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9000);
+        config.put("labelString", "");
+        config.put("numExecutors", 1);
+        config.put("cloneStrategy", "LINKED");
+        config.put("mode", "NORMAL");
+        config.put("javaVersion", "OPENJDK_21");
+
+        ProxmoxTemplate template = loader.createProxmoxTemplate(config);
+
+        assertEquals(CloneStrategy.LINKED, template.getCloneStrategy());
+        assertEquals(Node.Mode.NORMAL, template.getMode());
+        assertEquals(JavaInstallation.OPENJDK_21, template.getJavaVersion());
+    }
+
+    @Test
+    public void createProxmoxTemplate_invalidEnumThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "test");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9000);
+        config.put("labelString", "");
+        config.put("numExecutors", 1);
+        config.put("cloneStrategy", "INVALID_STRATEGY");
+
+        try {
+            loader.createProxmoxTemplate(config);
+            fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            assertTrue(e.getMessage().contains("INVALID_STRATEGY"));
+            assertTrue(e.getMessage().contains("cloneStrategy"));
+            assertTrue(e.getMessage().contains("FULL"));
+            assertTrue(e.getMessage().contains("LINKED"));
+        }
+    }
+
+    // ---- convertYamlToObjects tests ----
+
+    @Test
+    public void convertYamlToObjects_fullIntegration() {
+        Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
+        List<String> warnings = new ArrayList<>();
+        Map<String, Map<String, Object>> mergedConfig = loader.createConfigFromYaml(yamlData, warnings);
+
+        List<ProxmoxCloud> clouds = loader.convertYamlToObjects(mergedConfig);
+
+        assertEquals(1, clouds.size());
+        ProxmoxCloud cloud = clouds.get(0);
+        assertEquals("Test Proxmox Cloud", cloud.name);
+        assertEquals("https://proxmox.example.com:8006", cloud.getApiUrl());
+        assertEquals("proxmox-api-token", cloud.getCredentialsId());
+        assertTrue(cloud.isConfigManaged());
+        assertTrue(cloud.getLastSyncTimestamp() > 0);
+
+        List<ProxmoxTemplate> templates = cloud.getTemplates();
+        assertEquals(2, templates.size());
+
+        ProxmoxTemplate linuxBuilder = templates.stream()
+                .filter(t -> "linux-builder".equals(t.getName()))
+                .findFirst().orElseThrow();
+        assertEquals("pve1", linuxBuilder.getNode());
+        assertEquals(9000, linuxBuilder.getTemplateVmId());
+        assertEquals("linux docker", linuxBuilder.getLabelString());
+        assertEquals(2, linuxBuilder.getNumExecutors());
+        assertEquals(8, linuxBuilder.getCores());
+        assertEquals(16384, linuxBuilder.getMemory());
+        assertEquals("local-lvm", linuxBuilder.getTargetStorage());
+        assertEquals(JavaInstallation.OPENJDK_21, linuxBuilder.getJavaVersion());
+    }
+
+    // ---- persistJenkinsChanges tests ----
+
+    @Test
+    public void persistJenkinsChanges_addsNewClouds() throws Exception {
+        Jenkins jenkins = j.jenkins;
+
+        ProxmoxCloud cloud = new ProxmoxCloud("New Cloud");
+        loader.persistJenkinsChanges(List.of(cloud), jenkins);
+
+        assertEquals(1, jenkins.clouds.size());
+        assertNotNull(jenkins.getCloud("New Cloud"));
+    }
+
+    @Test
+    public void persistJenkinsChanges_replacesExistingCloud() throws Exception {
+        Jenkins jenkins = j.jenkins;
+        ProxmoxCloud existing = new ProxmoxCloud("Existing Cloud");
+        jenkins.clouds.add(existing);
+
+        ProxmoxCloud replacement = new ProxmoxCloud("Existing Cloud");
+        replacement.setApiUrl("https://new-url:8006");
+        loader.persistJenkinsChanges(List.of(replacement), jenkins);
+
+        assertEquals(1, jenkins.clouds.size());
+        Cloud inList = jenkins.getCloud("Existing Cloud");
+        assertTrue(inList instanceof ProxmoxCloud);
+        assertEquals("https://new-url:8006", ((ProxmoxCloud) inList).getApiUrl());
+    }
+
+    @Test
+    public void persistJenkinsChanges_leavesUnrelatedClouds() throws Exception {
+        Jenkins jenkins = j.jenkins;
+        ProxmoxCloud unrelated = new ProxmoxCloud("Unrelated Cloud");
+        jenkins.clouds.add(unrelated);
+
+        ProxmoxCloud newCloud = new ProxmoxCloud("New Cloud");
+        loader.persistJenkinsChanges(List.of(newCloud), jenkins);
+
+        assertEquals(2, jenkins.clouds.size());
+        assertNotNull(jenkins.getCloud("Unrelated Cloud"));
+        assertNotNull(jenkins.getCloud("New Cloud"));
+    }
+
+    // ---- processYamlAndPersistConfig end-to-end ----
+
+    @Test
+    public void processYamlAndPersistConfig_endToEnd() throws Exception {
+        Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
+        Jenkins jenkins = j.jenkins;
+
+        ProxmoxSyncResult result = loader.processYamlAndPersistConfig(yamlData, jenkins);
+
+        assertTrue(result.isSuccess());
+        assertEquals(1, result.cloudsConfigured());
+        assertEquals(2, result.templatesConfigured());
+        assertTrue(result.warnings().isEmpty());
+        assertTrue(result.errors().isEmpty());
+
+        assertEquals(1, jenkins.clouds.size());
+        ProxmoxCloud cloud = (ProxmoxCloud) jenkins.getCloud("Test Proxmox Cloud");
+        assertNotNull(cloud);
+        assertEquals(2, cloud.getTemplates().size());
+    }
+
+    @Test
+    public void processYamlAndPersistConfig_allOrNothing() throws Exception {
+        Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-no-name.yaml");
+        Jenkins jenkins = j.jenkins;
+
+        ProxmoxSyncResult result = loader.processYamlAndPersistConfig(yamlData, jenkins);
+
+        assertFalse(result.isSuccess());
+        assertEquals(0, result.cloudsConfigured());
+        assertEquals(0, jenkins.clouds.size());
+    }
+
+    // ---- combineConfig tests ----
+
+    @Test
+    public void combineConfig_specificOverridesDefaults() {
+        Map<String, Object> defaults = Map.of("a", 1, "b", 2);
+        Map<String, Object> specific = Map.of("b", 99, "c", 3);
+
+        Map<String, Object> result = loader.combineConfig(defaults, specific);
+
+        assertEquals(1, result.get("a"));
+        assertEquals(99, result.get("b"));
+        assertEquals(3, result.get("c"));
+    }
+
+    @Test
+    public void combineConfig_nullDefaultsHandled() {
+        Map<String, Object> specific = Map.of("a", 1);
+        Map<String, Object> result = loader.combineConfig(null, specific);
+        assertEquals(1, result.get("a"));
+    }
+
+    @Test
+    public void combineAgentConfig_threeLevelMerge() {
+        Map<String, Object> defaults = Map.of("a", 1, "b", 2, "c", 3);
+        Map<String, Object> nodeDefaults = Map.of("b", 20, "d", 4);
+        Map<String, Object> specific = new LinkedHashMap<>(Map.of("c", 30, "e", 5, "cloudIds", List.of("x")));
+
+        Map<String, Object> result = loader.combineAgentConfig(defaults, nodeDefaults, specific);
+
+        assertEquals(1, result.get("a"));
+        assertEquals(20, result.get("b"));
+        assertEquals(30, result.get("c"));
+        assertEquals(4, result.get("d"));
+        assertEquals(5, result.get("e"));
+        assertFalse(result.containsKey("cloudIds"));
+    }
+
+    @Test
+    public void combineAgentConfig_nullNodeDefaultsHandled() {
+        Map<String, Object> defaults = Map.of("a", 1);
+        Map<String, Object> specific = new LinkedHashMap<>(Map.of("b", 2, "cloudIds", List.of("x")));
+
+        Map<String, Object> result = loader.combineAgentConfig(defaults, null, specific);
+
+        assertEquals(1, result.get("a"));
+        assertEquals(2, result.get("b"));
+    }
+}

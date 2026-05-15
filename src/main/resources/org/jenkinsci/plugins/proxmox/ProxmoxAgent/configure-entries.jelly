@@ -1,0 +1,44 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:f="/lib/form">
+  <div class="jenkins-section">
+    <f:entry title="Cloud" field="cloudName">
+      <f:readOnlyTextbox />
+    </f:entry>
+
+    <f:entry title="Template" field="templateName">
+      <f:readOnlyTextbox />
+    </f:entry>
+
+    <f:entry title="Proxmox Node" field="proxmoxNode">
+      <f:readOnlyTextbox />
+    </f:entry>
+
+    <f:entry title="VM ID" field="vmId">
+      <f:readOnlyTextbox />
+    </f:entry>
+  </div>
+
+  <div class="jenkins-section">
+    <f:entry title="Description">
+      <f:textarea name="nodeDescription" value="${it.nodeDescription}" codemirror-mode="${app.markupFormatter.codeMirrorMode}" codemirror-config="${app.markupFormatter.codeMirrorConfig}" previewEndpoint="/markupFormatter/previewDescription"/>
+    </f:entry>
+  </div>
+
+  <f:entry title="Number of executors" field="numExecutors">
+    <f:number clazz="positive-number-required" min="1" step="1" default="1"/>
+  </f:entry>
+
+  <f:entry title="Remote root directory" field="remoteFS">
+    <f:readOnlyTextbox />
+  </f:entry>
+
+  <f:entry title="Labels" field="labelString">
+    <f:textbox />
+  </f:entry>
+
+  <f:slave-mode name="mode" node="${it}" />
+
+  <f:descriptorList title="Node Properties"
+                    descriptors="${descriptor.nodePropertyDescriptors(it)}"
+                    field="nodeProperties" />
+</j:jelly>

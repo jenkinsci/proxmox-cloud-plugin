@@ -1,0 +1,18 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form">
+    <f:entry title="ID" field="id"
+             description="A unique identifier for this credential in Jenkins (e.g. proxmox-api-token)">
+        <f:textbox/>
+    </f:entry>
+    <f:entry title="Description" field="description">
+        <f:textbox/>
+    </f:entry>
+    <f:entry title="API Token ID" field="tokenId"
+             description="Proxmox API token in the format user@realm!tokenname">
+        <f:textbox/>
+    </f:entry>
+    <f:entry title="API Token Secret" field="tokenSecret"
+             description="The UUID secret printed when the token was created">
+        <f:password/>
+    </f:entry>
+</j:jelly>

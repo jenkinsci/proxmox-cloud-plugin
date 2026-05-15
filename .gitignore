@@ -1,0 +1,15 @@
+target/
+*.class
+*.hpi
+*.jpi
+work/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+tmp/
+
+# Claude Code
+/.claude/settings.local.json
+/CLAUDE.md

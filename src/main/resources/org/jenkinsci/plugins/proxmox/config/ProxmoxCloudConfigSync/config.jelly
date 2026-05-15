@@ -1,0 +1,58 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form" xmlns:c="/lib/credentials"
+         xmlns:st="jelly:stapler">
+
+    <f:section title="Proxmox Cloud Config Sync">
+        <f:optionalBlock title="Manage Proxmox Cloud configuration via source control"
+                         field="enabled" checked="${instance.enabled}">
+
+            <f:entry title="Git Repository URL" field="gitUrl">
+                <f:textbox/>
+            </f:entry>
+
+            <f:entry title="Git Credentials" field="gitCredentialsId">
+                <c:select/>
+            </f:entry>
+
+            <f:entry title="Branch" field="gitBranch">
+                <f:textbox default="main"/>
+            </f:entry>
+
+            <f:entry title="YAML File Path" field="yamlFilePath">
+                <f:textbox default="proxmox-cloud.yaml"/>
+            </f:entry>
+
+            <f:validateButton title="Test Git Connection" progress="Testing..."
+                              method="testGitConnection"
+                              with="gitUrl,gitCredentialsId,gitBranch,yamlFilePath"/>
+
+            <f:entry title="Sync Schedule (cron)" field="cronSpec">
+                <f:textbox/>
+            </f:entry>
+
+            <f:entry title="Allow manual changes to config-managed clouds" field="allowManualChanges">
+                <f:checkbox default="true"/>
+            </f:entry>
+
+            <f:entry title="">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <button type="button" id="proxmox-sync-now-btn"
+                            class="jenkins-button jenkins-button--primary"
+                            onclick="proxmoxRunSync()">Sync Now</button>
+                    <span id="proxmox-sync-spinner" style="display:none">Syncing...</span>
+                </div>
+                <div id="proxmox-sync-result" style="margin-top:8px;"></div>
+
+                <j:if test="${instance.lastSyncResult != null}">
+                    <div style="margin-top:4px; color: #666; font-size: 0.9em;">
+                        Previous: ${instance.lastSyncResult}
+                    </div>
+                </j:if>
+            </f:entry>
+
+        </f:optionalBlock>
+    </f:section>
+
+    <st:adjunct includes="org.jenkinsci.plugins.proxmox.config.ProxmoxCloudConfigSync.config-sync"/>
+
+</j:jelly>

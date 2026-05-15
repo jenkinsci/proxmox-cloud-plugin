@@ -1,0 +1,46 @@
+cloudDefaults:
+  apiUrl: "https://proxmox.example.com:8006"
+  credentialsId: "proxmox-api-token"
+  ignoreSslErrors: true
+
+cloudConfigurations:
+  cloud1:
+    name: "Cloud One"
+    instanceCap: 5
+  cloud2:
+    name: "Cloud Two"
+    instanceCap: 10
+    apiUrl: "https://proxmox2.example.com:8006"
+
+agentDefaults:
+  cloneStrategy: FULL
+  remoteFs: "/home/ubuntu/agent"
+  mode: EXCLUSIVE
+  credentialsId: "ssh-key"
+  ciUser: "ubuntu"
+  cores: 2
+  memoryMb: 4096
+
+agentDefaults-pve1:
+  templateVmId: 9000
+  targetStorage: "local-lvm"
+
+agentDefaults-pve2:
+  templateVmId: 9002
+  targetStorage: "ceph-pool"
+
+agentConfigurations:
+  builder-both:
+    cloudIds: ["cloud1", "cloud2"]
+    node: "pve1"
+    name: "builder-both"
+    labelString: "linux"
+    numExecutors: 1
+
+  builder-cloud2-only:
+    cloudIds: ["cloud2"]
+    node: "pve2"
+    name: "builder-cloud2"
+    labelString: "linux arm64"
+    numExecutors: 2
+    memoryMb: 8192

@@ -1,0 +1,14 @@
+cloudConfigurations:
+  simpleCloud:
+    name: "Simple Cloud"
+    apiUrl: "https://proxmox.example.com:8006"
+    credentialsId: "proxmox-api-token"
+
+agentConfigurations:
+  simple-agent:
+    cloudIds: ["simpleCloud"]
+    name: "simple-agent"
+    node: "pve1"
+    templateVmId: 9000
+    labelString: "linux"
+    numExecutors: 1

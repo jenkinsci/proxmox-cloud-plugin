@@ -1,0 +1,14 @@
+cloudConfigurations:
+  existingCloud:
+    name: "Existing Cloud"
+    apiUrl: "https://proxmox.example.com:8006"
+    credentialsId: "proxmox-api-token"
+
+agentConfigurations:
+  bad-agent:
+    cloudIds: ["nonExistentCloud"]
+    name: "bad-agent"
+    node: "pve1"
+    templateVmId: 9000
+    labelString: "linux"
+    numExecutors: 1

@@ -1,0 +1,4 @@
+<?jelly escape-by-default='true'?>
+<div>
+    Provision Jenkins agents as Proxmox VE virtual machines.
+</div>

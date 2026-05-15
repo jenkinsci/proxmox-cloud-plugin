@@ -1,0 +1,48 @@
+cloudDefaults:
+  apiUrl: "https://proxmox.example.com:8006"
+  credentialsId: "proxmox-api-token"
+  ignoreSslErrors: true
+  instanceCap: 10
+  operationTimeoutSec: 300
+  startVmId: 500
+  cleanupOrphanedAgents: true
+
+cloudConfigurations:
+  testCluster:
+    name: "Test Proxmox Cloud"
+
+agentDefaults:
+  cloneStrategy: FULL
+  remoteFs: "/home/ubuntu/agent"
+  mode: EXCLUSIVE
+  credentialsId: "ssh-key"
+  javaVersion: OPENJDK_21
+  idleTerminationMinutes: 30
+  namePrefix: "jenkins-agent-"
+  ciUser: "ubuntu"
+  ipConfig: "ip=dhcp"
+  cores: 4
+  memoryMb: 8192
+
+agentDefaults-pve1:
+  templateVmId: 9000
+  targetStorage: "local-lvm"
+  networkBridge: "vmbr0"
+
+agentConfigurations:
+  linux-builder:
+    cloudIds: ["testCluster"]
+    node: "pve1"
+    name: "linux-builder"
+    labelString: "linux docker"
+    numExecutors: 2
+    cores: 8
+    memoryMb: 16384
+
+  arm64-builder:
+    cloudIds: ["testCluster"]
+    node: "pve1"
+    name: "arm64-builder"
+    labelString: "linux arm64"
+    numExecutors: 1
+    templateVmId: 9001
