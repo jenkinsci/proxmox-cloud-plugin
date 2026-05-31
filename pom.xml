@@ -7,12 +7,13 @@
     <parent>
         <groupId>org.jenkins-ci.plugins</groupId>
         <artifactId>plugin</artifactId>
-        <version>5.24</version>
+        <version>6.2189.v695a_c41f5249</version>
         <relativePath/>
     </parent>
 
+    <groupId>io.jenkins.plugins</groupId>
     <artifactId>proxmox-cloud</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>${changelist}</version>
     <packaging>hpi</packaging>
     <name>Proxmox Cloud Plugin</name>
     <url>https://github.com/jenkinsci/proxmox-cloud-plugin</url>
@@ -25,14 +26,6 @@
         </license>
     </licenses>
 
-    <developers>
-        <developer>
-            <id>ajcarter</id>
-            <name>Aidan Carter</name>
-            <email>aidanc@users.noreply.github.com</email>
-        </developer>
-    </developers>
-
     <scm>
         <connection>scm:git:https://github.com/jenkinsci/proxmox-cloud-plugin.git</connection>
         <developerConnection>scm:git:git@github.com:jenkinsci/proxmox-cloud-plugin.git</developerConnection>
@@ -41,16 +34,20 @@
     </scm>
 
     <properties>
-        <jenkins.version>2.479.3</jenkins.version>
-        <maven.compiler.release>21</maven.compiler.release>
+        <changelist>999999-SNAPSHOT</changelist>
+        <jenkins.baseline>2.528</jenkins.baseline>
+        <jenkins.version>${jenkins.baseline}.3</jenkins.version>
+        <hpi.strictBundledArtifacts>true</hpi.strictBundledArtifacts>
+        <ban-deprecated-stapler.skip>false</ban-deprecated-stapler.skip>
+        <ban-commons-lang-2.skip>false</ban-commons-lang-2.skip>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
                 <groupId>io.jenkins.tools.bom</groupId>
-                <artifactId>bom-2.479.x</artifactId>
-                <version>5054.v620b_5d2b_d5e6</version>
+                <artifactId>bom-${jenkins.baseline}.x</artifactId>
+                <version>6509.v993a_c958a_e35</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
