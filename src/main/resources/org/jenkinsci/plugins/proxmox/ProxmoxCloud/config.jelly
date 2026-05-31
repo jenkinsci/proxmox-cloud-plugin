@@ -123,6 +123,154 @@
                                        class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
                             </div>
                         </f:entry>
+                        <f:entry title="Clone Strategy">
+                            <div class="setting-main">
+                                <input type="text" value="${template.cloneStrategy}" disabled="disabled"
+                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                            </div>
+                        </f:entry>
+                        <f:entry title="VM Username">
+                            <div class="setting-main">
+                                <input type="text" value="${template.ciUser}" disabled="disabled"
+                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                            </div>
+                        </f:entry>
+                        <f:entry title="SSH Credentials">
+                            <div class="setting-main">
+                                <input type="text" value="${template.credentialsId}" disabled="disabled"
+                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                            </div>
+                        </f:entry>
+                        <f:entry title="Usage">
+                            <div class="setting-main">
+                                <input type="text" value="${template.mode}" disabled="disabled"
+                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                            </div>
+                        </f:entry>
+                        <f:advanced>
+                            <f:section title="Proxmox Resources">
+                                <f:entry title="Target Storage">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.targetStorage}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Target Pool">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.targetPool}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="CPU Cores (0 = inherit)">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.cores}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Memory MB (0 = inherit)">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.memory}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Disk Size GB (0 = inherit)">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.diskSizeGb}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Network Bridge">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.networkBridge}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                            </f:section>
+                            <f:section title="Agent Settings">
+                                <f:entry title="Remote FS Root">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.remoteFs}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Java Version">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.javaVersion}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Java Path">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.javaPath}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="JVM Options">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.jvmOptions}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Name Prefix">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.namePrefix}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                            </f:section>
+                            <f:section title="Lifecycle">
+                                <f:entry title="Idle Termination (minutes)">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.idleTerminationMinutes}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Instance Cap (0 = unlimited)">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.instanceCap}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Max Total Uses (0 = unlimited)">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.maxTotalUses}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Startup Wait (seconds)">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.startupWaitSeconds}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                            </f:section>
+                            <f:section title="Cloud-Init">
+                                <f:entry title="IP Configuration">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.ipConfig}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Nameserver">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.nameserver}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="Search Domain">
+                                    <div class="setting-main">
+                                        <input type="text" value="${template.searchDomain}" disabled="disabled"
+                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                    </div>
+                                </f:entry>
+                                <f:entry title="User Data Script">
+                                    <div class="setting-main">
+                                        <textarea disabled="disabled" rows="3"
+                                                  class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed; width:100%;">${template.userDataScript}</textarea>
+                                    </div>
+                                </f:entry>
+                            </f:section>
+                        </f:advanced>
                     </f:section>
                 </j:forEach>
             </f:entry>

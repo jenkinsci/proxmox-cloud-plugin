@@ -58,7 +58,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     private int memory;
     private int diskSizeGb;
     private String networkBridge;
-    private String remoteFs = "/home/ubuntu/agent";
+    private String remoteFs;
     private Node.Mode mode = Node.Mode.EXCLUSIVE;
     private String credentialsId;
     private String javaPath = "java";
@@ -240,7 +240,11 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public int getMemory() { return memory; }
     public int getDiskSizeGb() { return diskSizeGb; }
     public String getNetworkBridge() { return networkBridge; }
-    public String getRemoteFs() { return remoteFs; }
+    public String getRemoteFs() {
+        if (remoteFs != null && !remoteFs.isBlank()) return remoteFs;
+        String user = (ciUser != null && !ciUser.isBlank()) ? ciUser : "ubuntu";
+        return "/home/" + user + "/agent";
+    }
     public Node.Mode getMode() { return mode; }
     public String getCredentialsId() { return credentialsId; }
     public String getJavaPath() { return javaPath; }
@@ -265,7 +269,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     @DataBoundSetter public void setMemory(int v) { this.memory = v; }
     @DataBoundSetter public void setDiskSizeGb(int v) { this.diskSizeGb = v; }
     @DataBoundSetter public void setNetworkBridge(String v) { this.networkBridge = v; }
-    @DataBoundSetter public void setRemoteFs(String v) { this.remoteFs = v; }
+    @DataBoundSetter public void setRemoteFs(String v) { this.remoteFs = (v != null && !v.isBlank()) ? v : null; }
     @DataBoundSetter public void setMode(Node.Mode v) { this.mode = v; }
     @DataBoundSetter public void setCredentialsId(String v) { this.credentialsId = v; }
     @DataBoundSetter public void setJavaPath(String v) { this.javaPath = v; }
@@ -311,6 +315,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                 return new ProxmoxClient(apiUrl, creds.getTokenId(),
                         creds.getTokenSecret(), ignoreSslErrors);
             } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to create Proxmox API client", e);
                 return null;
             }
         }
@@ -387,7 +392,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                     model.add(p.storage() + " (" + p.type() + ")", p.storage());
                 }
             } catch (Exception e) {
-                // graceful degradation — keep the "(inherit)" option
+                LOGGER.log(Level.WARNING, "Failed to fetch storage pools for node " + node, e);
             }
             return model;
         }
@@ -410,7 +415,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                     }
                 }
             } catch (Exception e) {
-                // graceful degradation
+                LOGGER.log(Level.WARNING, "Failed to fetch network devices for node " + node, e);
             }
             return model;
         }
@@ -432,7 +437,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                     model.add(label, p.poolid());
                 }
             } catch (Exception e) {
-                // graceful degradation
+                LOGGER.log(Level.WARNING, "Failed to fetch resource pools", e);
             }
             return model;
         }
@@ -463,13 +468,14 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         @POST
         public ListBoxModel doFillCredentialsIdItems() {
             Jenkins.get().checkPermission(Jenkins.ADMINISTER);
-            return new StandardListBoxModel()
-                    .includeEmptyValue()
-                    .includeMatchingAs(ACL.SYSTEM2,
-                            Jenkins.get(),
-                            StandardUsernameCredentials.class,
-                            Collections.emptyList(),
-                            CredentialsMatchers.always());
+            ListBoxModel model = new ListBoxModel();
+            model.add("- none -", "");
+            for (StandardUsernameCredentials c : CredentialsProvider.lookupCredentialsInItemGroup(
+                    StandardUsernameCredentials.class, Jenkins.get(), ACL.SYSTEM2,
+                    Collections.emptyList())) {
+                model.add(c.getId(), c.getId());
+            }
+            return model;
         }
 
         public FormValidation doCheckName(@QueryParameter String value) {

@@ -61,6 +61,7 @@ public class ProxmoxCloud extends Cloud {
     private List<ProxmoxTemplate> templates = new ArrayList<>();
 
     private transient volatile ProxmoxClient client;
+    private transient volatile Object provisionLock;
 
     private static final DateTimeFormatter SYNC_TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -68,6 +69,20 @@ public class ProxmoxCloud extends Cloud {
     @DataBoundConstructor
     public ProxmoxCloud(String name) {
         super(name);
+    }
+
+    private Object getProvisionLock() {
+        Object lock = provisionLock;
+        if (lock == null) {
+            synchronized (this) {
+                lock = provisionLock;
+                if (lock == null) {
+                    lock = new Object();
+                    provisionLock = lock;
+                }
+            }
+        }
+        return lock;
     }
 
     @Override
@@ -92,8 +107,10 @@ public class ProxmoxCloud extends Cloud {
             for (int i = 0; i < toProvision; i++) {
                 String displayName = template.getName() + " (pending)";
                 Future<Node> future = Computer.threadPoolForRemoting.submit(() -> {
-                    var listener = hudson.model.TaskListener.NULL;
-                    return template.provision(this, listener);
+                    synchronized (getProvisionLock()) {
+                        var listener = hudson.model.TaskListener.NULL;
+                        return template.provision(this, listener);
+                    }
                 });
                 planned.add(new NodeProvisioner.PlannedNode(displayName, future, template.getNumExecutors()));
                 excessWorkload -= template.getNumExecutors();
@@ -149,7 +166,10 @@ public class ProxmoxCloud extends Cloud {
         }
 
         try {
-            ProxmoxAgent agent = t.provision(this, hudson.model.TaskListener.NULL);
+            ProxmoxAgent agent;
+            synchronized (getProvisionLock()) {
+                agent = t.provision(this, hudson.model.TaskListener.NULL);
+            }
             jenkins.addNode(agent);
             return new HttpRedirect("/computer/" + agent.getNodeName());
         } catch (Exception e) {

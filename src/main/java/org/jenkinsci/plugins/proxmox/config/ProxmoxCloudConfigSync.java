@@ -23,6 +23,7 @@ import org.yaml.snakeyaml.Yaml;
 
 import hudson.EnvVars;
 import hudson.model.TaskListener;
+import org.eclipse.jgit.transport.RefSpec;
 import hudson.scheduler.CronTabList;
 
 import java.io.File;
@@ -147,7 +148,8 @@ public class ProxmoxCloudConfigSync extends GlobalConfiguration {
         if (!gitDir.exists()) {
             git.clone(gitUrl, "origin", false, null);
         } else {
-            git.fetch_().from(new org.eclipse.jgit.transport.URIish(gitUrl), null).execute();
+            git.fetch_().from(new org.eclipse.jgit.transport.URIish(gitUrl),
+                    java.util.List.of(new RefSpec("+refs/heads/*:refs/remotes/origin/*"))).execute();
         }
 
         String ref = (gitBranch != null && !gitBranch.isBlank()) ? gitBranch : "main";
@@ -280,7 +282,8 @@ public class ProxmoxCloudConfigSync extends GlobalConfiguration {
             if (!gitDir.exists()) {
                 git.clone(gitUrl, "origin", false, null);
             } else {
-                git.fetch_().from(new org.eclipse.jgit.transport.URIish(gitUrl), null).execute();
+                git.fetch_().from(new org.eclipse.jgit.transport.URIish(gitUrl),
+                    java.util.List.of(new RefSpec("+refs/heads/*:refs/remotes/origin/*"))).execute();
             }
 
             String ref = (gitBranch != null && !gitBranch.isBlank()) ? gitBranch : "main";

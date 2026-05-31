@@ -118,25 +118,38 @@ public class ProxmoxLauncher extends ComputerLauncher {
 
             String command = "which java >/dev/null 2>&1 && java -version 2>&1 || "
                     + "sudo bash -c '" + installCmd.replace("'", "'\\''") + "'";
-            Session session = conn.openSession();
-            try {
-                session.execCommand(command);
-                String stdout = readStream(session.getStdout());
-                String stderr = readStream(session.getStderr());
-                session.waitForCondition(com.trilead.ssh2.ChannelCondition.EXIT_STATUS, 300000);
-                Integer exitCode = session.getExitStatus();
+            execRemoteCommand(conn, command, log, "Java installation");
 
-                if (exitCode != null && exitCode != 0) {
-                    log.println("[Proxmox] Java installation output: " + stdout);
-                    log.println("[Proxmox] Java installation errors: " + stderr);
-                    throw new IOException("Java installation failed with exit code " + exitCode);
-                }
-                log.println("[Proxmox] Java is available");
-            } finally {
-                session.close();
-            }
+            String verifyCmd = "java -version 2>&1"
+                    + " || { JAVA_BIN=$(find /usr/lib/jvm -name java -path '*/bin/java' -type f 2>/dev/null | head -1);"
+                    + " [ -n \"$JAVA_BIN\" ] && sudo ln -sf \"$JAVA_BIN\" /usr/local/bin/java"
+                    + " && java -version 2>&1; }";
+            String output = execRemoteCommand(conn, verifyCmd, log, "Java verification");
+            log.println("[Proxmox] Java is available: " + output.lines().findFirst().orElse(""));
         } finally {
             conn.close();
+        }
+    }
+
+    private String execRemoteCommand(Connection conn, String command, PrintStream log,
+                                      String description) throws IOException, InterruptedException {
+        Session session = conn.openSession();
+        try {
+            session.execCommand(command);
+            String stdout = readStream(session.getStdout());
+            String stderr = readStream(session.getStderr());
+            session.waitForCondition(com.trilead.ssh2.ChannelCondition.EXIT_STATUS,
+                    (long) startupWaitSeconds * 1000);
+            Integer exitCode = session.getExitStatus();
+
+            if (exitCode == null || exitCode != 0) {
+                log.println("[Proxmox] " + description + " output: " + stdout);
+                log.println("[Proxmox] " + description + " errors: " + stderr);
+                throw new IOException(description + " failed with exit code " + exitCode);
+            }
+            return stdout + stderr;
+        } finally {
+            session.close();
         }
     }
 
