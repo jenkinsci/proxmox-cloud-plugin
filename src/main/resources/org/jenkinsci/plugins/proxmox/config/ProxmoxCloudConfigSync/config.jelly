@@ -37,8 +37,7 @@
             <f:entry title="">
                 <div style="display:flex; align-items:center; gap:10px;">
                     <button type="button" id="proxmox-sync-now-btn"
-                            class="jenkins-button jenkins-button--primary"
-                            onclick="proxmoxRunSync()">Sync Now</button>
+                            class="jenkins-button jenkins-button--primary proxmox-sync-now">Sync Now</button>
                     <span id="proxmox-sync-spinner" style="display:none">Syncing...</span>
                 </div>
                 <div id="proxmox-sync-result" style="margin-top:8px;"></div>
