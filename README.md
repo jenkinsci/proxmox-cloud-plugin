@@ -14,6 +14,22 @@ A Jenkins cloud provider plugin that dynamically provisions QEMU virtual machine
 
 Create a dedicated user, role, and API token on your Proxmox host.
 
+Proxmox v8.x
+```bash
+# Create a role with minimum required privileges
+pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.Monitor Datastore.AllocateSpace Datastore.Audit SDN.Use"
+
+# Create a user
+pveum user add jenkins@pve
+
+# Assign the role at the root path (or scope to a specific /pool/... path)
+pveum aclmod / -user jenkins@pve -role JenkinsProvisioner
+
+# Create an API token (--privsep 0 = token inherits user permissions)
+pveum user token add jenkins@pve jenkins-token --privsep 0
+```
+
+Proxmox v9.x
 ```bash
 # Create a role with minimum required privileges
 pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.GuestAgent.Audit Datastore.AllocateSpace Datastore.Audit SDN.Use"
@@ -33,6 +49,27 @@ Save the output. You will need:
 - **Token Secret**: the UUID printed by the command
 
 #### Privilege Reference
+
+Proxmox v8.x
+
+| Privilege                 | Purpose                                                              |
+|---------------------------|----------------------------------------------------------------------|
+| `VM.Allocate`             | Create and remove VMs (includes reserving VM IDs and destroying VMs) |
+| `VM.Clone`                | Clone templates                                                      |
+| `VM.Audit`                | Read VM config and status                                            |
+| `VM.Config.Disk`          | Configure/resize disks on cloned VMs                                 |
+| `VM.Config.CPU`           | Override CPU cores                                                   |
+| `VM.Config.Memory`        | Override memory                                                      |
+| `VM.Config.Network`       | Configure network interfaces                                         |
+| `VM.Config.Options`       | Set general VM options                                               |
+| `VM.Config.Cloudinit`     | Inject cloud-init parameters                                         |
+| `VM.PowerMgmt`            | Start, stop, shutdown VMs                                            |
+| `VM.Monitor`        | ??                                                                   |
+| `Datastore.AllocateSpace` | Allocate disk space for clones                                       |
+| `Datastore.Audit`         | List available storage pools                                         |
+| `SDN.Use`                 | Use network bridges                                                  |
+
+Proxmox v9.x
 
 | Privilege | Purpose |
 |---|---|
@@ -84,7 +121,7 @@ qm set 9000 --serial0 socket --vga serial0
 qm template 9000
 ```
 
-**Note:** The default cloud image disk is ~3.5GB. You do not need to resize it here — the plugin can resize the disk at clone time via the "Disk Size GB" template setting. Set it to at least 10GB if you plan to install Java automatically.
+**Note:** The default cloud image disk is ~3.5GB. You do not need to resize it here - the plugin can resize the disk at clone time via the "Disk Size GB" template setting. Set it to at least 10GB if you plan to install Java automatically.
 
 ### 3. SSH Key Pair
 
@@ -94,7 +131,7 @@ Generate a key pair for Jenkins to connect to provisioned VMs:
 ssh-keygen -t ed25519 -f ~/.ssh/jenkins-proxmox -N "" -C "jenkins-agent"
 ```
 
-Add the **private key** (`~/.ssh/jenkins-proxmox`) as a Jenkins SSH credential (see step 4). The plugin automatically derives the public key from the credential and injects it into VMs via cloud-init at provision time — you do not need to configure the public key separately.
+Add the **private key** (`~/.ssh/jenkins-proxmox`) as a Jenkins SSH credential (see step 4). The plugin automatically derives the public key from the credential and injects it into VMs via cloud-init at provision time - you do not need to configure the public key separately.
 
 ### 4. Jenkins Credentials
 
@@ -135,7 +172,7 @@ Go to **Manage Jenkins → Clouds → New cloud → Proxmox VE**.
 | Credentials | Select the **Proxmox API Token** credential created above |
 | Ignore SSL Errors | Check if using self-signed certs (Proxmox default) |
 
-Click **Test Connection** — it should report the Proxmox VE version.
+Click **Test Connection** - it should report the Proxmox VE version.
 
 #### Template Settings
 

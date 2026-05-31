@@ -45,7 +45,7 @@ public class ProxmoxCloud extends Cloud {
 
     private static final Logger LOGGER = Logger.getLogger(ProxmoxCloud.class.getName());
 
-    static final int MIN_PVE_VERSION = 9;
+    static final int MIN_PVE_VERSION = 8;
     static final int MAX_KNOWN_PVE_VERSION = 9;
 
     private String apiUrl;
@@ -289,13 +289,13 @@ public class ProxmoxCloud extends Cloud {
                 int majorVersion = parseMajorVersion(version);
                 if (majorVersion > 0 && majorVersion < MIN_PVE_VERSION) {
                     return FormValidation.error(
-                            "Connected to Proxmox VE %s — version %d+ is required",
+                            "Connected to Proxmox VE %s - version %d+ is required",
                             version, MIN_PVE_VERSION);
                 }
                 if (majorVersion > MAX_KNOWN_PVE_VERSION) {
                     return FormValidation.warning(
-                            "Connected to Proxmox VE %s — this plugin has been tested with PVE %d. "
-                            + "Please report issues.", version, MAX_KNOWN_PVE_VERSION);
+                            "Connected to Proxmox VE %s - this plugin has been tested with PVE %d. "
+                            + "Please report any issues.", version, MAX_KNOWN_PVE_VERSION);
                 }
                 return FormValidation.ok("Connected to Proxmox VE " + version);
             } catch (ProxmoxAuthenticationException e) {
