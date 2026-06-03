@@ -7,9 +7,6 @@ Behaviour.specify(".proxmox-sync-now", "proxmox-config-sync", 0, function(btn) {
         spinner.style.display = 'inline';
         resultDiv.innerHTML = '';
 
-        var crumbHeader = crumb.fieldName;
-        var crumbValue = crumb.value;
-
         var descriptorUrl = document.querySelector('[data-descriptor-url*="ProxmoxCloudConfigSync"]');
         var baseUrl = (descriptorUrl ? descriptorUrl.getAttribute('data-descriptor-url') : '')
                       || rootURL + '/descriptor/org.jenkinsci.plugins.proxmox.config.ProxmoxCloudConfigSync';
@@ -23,9 +20,7 @@ Behaviour.specify(".proxmox-sync-now", "proxmox-config-sync", 0, function(btn) {
 
         fetch(baseUrl + '/runSync?' + params.toString(), {
             method: 'POST',
-            headers: {
-                [crumbHeader]: crumbValue
-            }
+            headers: crumb.wrap({})
         })
         .then(function(response) { return response.json(); })
         .then(function(data) {
