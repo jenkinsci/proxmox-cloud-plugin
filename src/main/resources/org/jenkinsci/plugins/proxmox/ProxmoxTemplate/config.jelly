@@ -23,7 +23,7 @@
     </f:entry>
 
     <f:entry title="Clone Strategy" field="cloneStrategy">
-        <f:select/>
+        <f:enum>${it.displayName}</f:enum>
     </f:entry>
 
     <f:entry title="VM Username" field="ciUser">
@@ -35,7 +35,7 @@
     </f:entry>
 
     <f:entry title="Usage" field="mode">
-        <f:select/>
+        <f:enum>${it.description}</f:enum>
     </f:entry>
 
     <f:advanced>
@@ -72,7 +72,7 @@
 
             <f:entry title="Java Version" field="javaVersion"
                      description="Automatically install Java on the agent if not present">
-                <f:select/>
+                <f:enum>${it.displayName}</f:enum>
             </f:entry>
 
             <f:entry title="Java Path" field="javaPath"

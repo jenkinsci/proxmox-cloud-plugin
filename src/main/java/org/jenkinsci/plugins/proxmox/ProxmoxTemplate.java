@@ -475,28 +475,6 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return model;
         }
 
-        public ListBoxModel doFillCloneStrategyItems() {
-            ListBoxModel model = new ListBoxModel();
-            for (CloneStrategy s : CloneStrategy.values()) {
-                model.add(s.getDisplayName(), s.name());
-            }
-            return model;
-        }
-
-        public ListBoxModel doFillJavaVersionItems() {
-            ListBoxModel model = new ListBoxModel();
-            for (JavaInstallation j : JavaInstallation.values()) {
-                model.add(j.getDisplayName(), j.name());
-            }
-            return model;
-        }
-
-        public ListBoxModel doFillModeItems() {
-            ListBoxModel model = new ListBoxModel();
-            model.add("Use this node as much as possible", Node.Mode.NORMAL.name());
-            model.add("Only build jobs with label expressions matching this node", Node.Mode.EXCLUSIVE.name());
-            return model;
-        }
 
         @POST
         public ListBoxModel doFillCredentialsIdItems() {
