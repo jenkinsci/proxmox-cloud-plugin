@@ -107,7 +107,7 @@ public class ProxmoxCloudConfigSync extends GlobalConfiguration {
                 lastSyncResult = result.getSummary();
 
                 if (result.isSuccess()) {
-                    LOGGER.info("Proxmox config sync completed: " + result.getSummary());
+                    LOGGER.fine("Proxmox config sync completed: " + result.getSummary());
                 } else {
                     LOGGER.warning("Proxmox config sync failed: " + result.getSummary());
                 }

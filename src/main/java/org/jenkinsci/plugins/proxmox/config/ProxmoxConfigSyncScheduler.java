@@ -38,7 +38,7 @@ public class ProxmoxConfigSyncScheduler extends AsyncPeriodicWork {
             Calendar cal = new GregorianCalendar();
             cal.add(Calendar.MINUTE, -1);
             if (cronTabList.check(cal)) {
-                LOGGER.info("Cron schedule matched, triggering Proxmox config sync");
+                LOGGER.fine("Cron schedule matched, triggering Proxmox config sync");
                 config.performSync();
             }
         } catch (Exception e) {

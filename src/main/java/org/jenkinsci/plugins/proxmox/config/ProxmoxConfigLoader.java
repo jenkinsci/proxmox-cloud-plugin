@@ -279,18 +279,18 @@ public class ProxmoxConfigLoader {
             String name = cloud.name;
             Cloud existing = jenkins.getCloud(name);
             if (existing != null) {
-                LOGGER.info("Removing existing cloud config: " + name);
+                LOGGER.fine("Removing existing cloud config: " + name);
                 jenkins.clouds.remove(existing);
             } else {
-                LOGGER.info("No existing cloud config found for: " + name);
+                LOGGER.fine("No existing cloud config found for: " + name);
             }
-            LOGGER.info("Adding cloud config: " + name);
+            LOGGER.fine("Adding cloud config: " + name);
             jenkins.clouds.add(cloud);
         }
 
         try {
             jenkins.save();
-            LOGGER.info("Jenkins configuration saved successfully");
+            LOGGER.fine("Jenkins configuration saved successfully");
         } catch (IOException e) {
             throw new RuntimeException("Failed to save Jenkins configuration", e);
         }

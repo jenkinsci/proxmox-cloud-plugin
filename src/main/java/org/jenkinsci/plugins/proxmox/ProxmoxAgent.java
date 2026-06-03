@@ -56,7 +56,7 @@ public class ProxmoxAgent extends AbstractCloudSlave implements EphemeralNode {
 
     @Override
     protected void _terminate(TaskListener listener) throws IOException, InterruptedException {
-        LOGGER.info("Terminating agent " + getNodeName() + " (VM " + vmId + " on " + proxmoxNode + ")");
+        LOGGER.fine("Terminating agent " + getNodeName() + " (VM " + vmId + " on " + proxmoxNode + ")");
 
         ProxmoxCloud cloud = getCloud();
         if (cloud == null) {
@@ -77,7 +77,7 @@ public class ProxmoxAgent extends AbstractCloudSlave implements EphemeralNode {
 
             String upid = client.destroyVm(proxmoxNode, vmId, true);
             client.waitForTask(proxmoxNode, upid, cloud.getOperationTimeout());
-            LOGGER.info("VM " + vmId + " destroyed on " + proxmoxNode);
+            LOGGER.fine("VM " + vmId + " destroyed on " + proxmoxNode);
         } catch (ProxmoxException e) {
             LOGGER.log(Level.WARNING, "Failed to terminate VM " + vmId, e);
             throw new IOException("Failed to terminate VM " + vmId, e);

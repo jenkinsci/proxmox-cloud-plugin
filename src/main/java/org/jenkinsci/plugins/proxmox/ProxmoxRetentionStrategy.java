@@ -29,7 +29,7 @@ public class ProxmoxRetentionStrategy extends RetentionStrategy<ProxmoxComputer>
         }
 
         if (maxTotalUses > 0 && agent.getTotalUses() >= maxTotalUses) {
-            LOGGER.info("Agent " + c.getName() + " reached max uses (" + maxTotalUses + "), terminating");
+            LOGGER.fine("Agent " + c.getName() + " reached max uses (" + maxTotalUses + "), terminating");
             terminate(agent);
             return 1;
         }
@@ -38,7 +38,7 @@ public class ProxmoxRetentionStrategy extends RetentionStrategy<ProxmoxComputer>
             long idleMs = System.currentTimeMillis() - c.getIdleStartMilliseconds();
             long thresholdMs = (long) idleTerminationMinutes * 60 * 1000;
             if (idleMs > thresholdMs) {
-                LOGGER.info("Agent " + c.getName() + " idle for " + (idleMs / 60000) + " minutes, terminating");
+                LOGGER.fine("Agent " + c.getName() + " idle for " + (idleMs / 60000) + " minutes, terminating");
                 terminate(agent);
             }
         }

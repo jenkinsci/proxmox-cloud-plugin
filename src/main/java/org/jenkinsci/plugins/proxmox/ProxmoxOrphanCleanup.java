@@ -84,7 +84,7 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
                     long uptimeSeconds = getUptime(client, nodeName, vm.vmid());
                     if (uptimeSeconds * 1000 < MIN_AGE_MS) continue;
 
-                    LOGGER.info("Destroying orphaned VM " + vm.vmid() + " (" + vm.name() + ") on " + nodeName);
+                    LOGGER.fine("Destroying orphaned VM " + vm.vmid() + " (" + vm.name() + ") on " + nodeName);
                     try {
                         String upid = client.stopVm(nodeName, vm.vmid());
                         client.waitForTask(nodeName, upid, 60);
