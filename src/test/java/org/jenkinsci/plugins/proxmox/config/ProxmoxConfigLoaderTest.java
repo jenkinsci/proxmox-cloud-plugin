@@ -218,7 +218,7 @@ public class ProxmoxConfigLoaderTest {
         assertEquals("Minimal Cloud", cloud.name);
         assertNull(cloud.getApiUrl());
         assertNull(cloud.getCredentialsId());
-        assertTrue(cloud.isIgnoreSslErrors());
+        assertFalse(cloud.isIgnoreSslErrors());
         assertEquals(0, cloud.getInstanceCap());
         assertEquals(300, cloud.getOperationTimeout());
         assertEquals(0, cloud.getStartVmId());

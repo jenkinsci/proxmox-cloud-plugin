@@ -50,7 +50,7 @@ public class ProxmoxCloud extends Cloud {
 
     private String apiUrl;
     private String credentialsId;
-    private boolean ignoreSslErrors = true;
+    private boolean ignoreSslErrors = false;
     private int instanceCap;
     private int operationTimeout = 300;
     private int startVmId;
