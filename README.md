@@ -2,12 +2,6 @@
 
 A Jenkins cloud provider plugin that dynamically provisions QEMU virtual machines on Proxmox VE as build agents. VMs are cloned from templates, configured via cloud-init, connected over SSH, and destroyed when idle.
 
-## Requirements
-
-- Jenkins 2.479.3+
-- Java 21+
-- Proxmox VE 9.x
-
 ## Setup
 
 ### 1. Proxmox API Token
