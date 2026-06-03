@@ -19,7 +19,8 @@
     </f:entry>
 
     <f:entry title="Number of Executors" field="numExecutors">
-        <f:number default="1" min="1" clazz="positive-number-required"/>
+        <f:number default="1" min="1" clazz="positive-number-required"
+                  checkMessage="Number of executors must be >= 1"/>
     </f:entry>
 
     <f:entry title="Clone Strategy" field="cloneStrategy">
@@ -49,15 +50,18 @@
             </f:entry>
 
             <f:entry title="CPU Cores (0 = inherit)" field="cores">
-                <f:number default="0" min="0" clazz="non-negative-number-required"/>
+                <f:number default="0" min="0" clazz="non-negative-number-required"
+                          checkMessage="CPU cores must be >= 0"/>
             </f:entry>
 
             <f:entry title="Memory MB (0 = inherit)" field="memory">
-                <f:number default="0" min="0" clazz="non-negative-number-required"/>
+                <f:number default="0" min="0" clazz="non-negative-number-required"
+                          checkMessage="Memory must be >= 0"/>
             </f:entry>
 
             <f:entry title="Disk Size GB (0 = inherit)" field="diskSizeGb">
-                <f:number default="0" min="0" clazz="non-negative-number-required"/>
+                <f:number default="0" min="0" clazz="non-negative-number-required"
+                          checkMessage="Disk size must be >= 0"/>
             </f:entry>
 
             <f:entry title="Network Bridge" field="networkBridge">
@@ -90,20 +94,24 @@
         </f:section>
 
         <f:section title="Lifecycle">
-            <f:entry title="Idle Termination (minutes)" field="idleTerminationMinutes">
-                <f:number default="30" min="0"/>
+            <f:entry title="Idle Termination (minutes, 0 = never)" field="idleTerminationMinutes">
+                <f:number default="30" min="0" clazz="non-negative-number-required"
+                          checkMessage="Idle termination minutes must be >= 0"/>
             </f:entry>
 
-            <f:entry title="Instance Cap (0 = unlimited)" field="instanceCap">
-                <f:number default="0" min="0" clazz="non-negative-number-required"/>
+            <f:entry title="Instance Cap (0 = no limit)" field="instanceCap">
+                <f:number default="0" min="0" clazz="non-negative-number-required"
+                          checkMessage="Instance cap must be >= 0"/>
             </f:entry>
 
             <f:entry title="Max Total Uses (0 = unlimited)" field="maxTotalUses">
-                <f:number default="0" min="0" clazz="non-negative-number-required"/>
+                <f:number default="0" min="0" clazz="non-negative-number-required"
+                          checkMessage="Max total uses must be >= 0"/>
             </f:entry>
 
             <f:entry title="Startup Wait (seconds)" field="startupWaitSeconds">
-                <f:number default="60" min="0"/>
+                <f:number default="60" min="0" clazz="non-negative-number-required"
+                          checkMessage="Startup wait seconds must be >= 0"/>
             </f:entry>
         </f:section>
 

@@ -304,16 +304,19 @@
                               with="apiUrl,credentialsId,ignoreSslErrors"/>
 
             <f:advanced>
-                <f:entry title="Instance Cap" field="instanceCap">
-                    <f:number default="0" min="0" clazz="non-negative-number-required"/>
+                <f:entry title="Instance Cap (0 = no limit)" field="instanceCap">
+                    <f:number default="0" min="0" clazz="non-negative-number-required"
+                              checkMessage="Instance cap must be >= 0"/>
                 </f:entry>
 
                 <f:entry title="Operation Timeout (seconds)" field="operationTimeout">
-                    <f:number default="300" min="1" clazz="positive-number-required"/>
+                    <f:number default="300" min="1" clazz="positive-number-required"
+                              checkMessage="Operation timeout must be at least 1 second"/>
                 </f:entry>
 
                 <f:entry title="Start VM ID (0 = default)" field="startVmId">
-                    <f:number default="0" min="0" clazz="non-negative-number-required"/>
+                    <f:number default="0" min="0" clazz="non-negative-number-required"
+                              checkMessage="Start VM ID must be >= 0"/>
                 </f:entry>
 
                 <f:entry title="Cleanup Orphaned Agents" field="cleanupOrphanedAgents">
