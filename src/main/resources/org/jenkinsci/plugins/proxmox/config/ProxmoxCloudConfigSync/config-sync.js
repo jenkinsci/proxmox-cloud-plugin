@@ -26,17 +26,17 @@ Behaviour.specify(".proxmox-sync-now", "proxmox-config-sync", 0, function(btn) {
         .then(function(data) {
             var html = '';
             if (data.success) {
-                html = '<div style="color:green; font-weight:bold;">&#10003; ' + data.summary + '</div>';
+                html = '<div style="color:var(--success-color); font-weight:bold;">&#10003; ' + data.summary + '</div>';
             } else {
-                html = '<div style="color:red; font-weight:bold;">&#10007; ' + data.summary + '</div>';
+                html = '<div style="color:var(--error-color); font-weight:bold;">&#10007; ' + data.summary + '</div>';
             }
             if (data.warnings && data.warnings.length > 0) {
-                html += '<div style="color:orange; margin-top:4px;">Warnings: ' + data.warnings.join('; ') + '</div>';
+                html += '<div style="color:var(--warning-color); margin-top:4px;">Warnings: ' + data.warnings.join('; ') + '</div>';
             }
             resultDiv.innerHTML = html;
         })
         .catch(function(err) {
-            resultDiv.innerHTML = '<div style="color:red;">Request failed: ' + err.message + '</div>';
+            resultDiv.innerHTML = '<div style="color:var(--error-color);">Request failed: ' + err.message + '</div>';
         })
         .finally(function() {
             btn.disabled = false;

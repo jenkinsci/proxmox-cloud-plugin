@@ -6,24 +6,24 @@
             <j:when test="${it.configManaged}">
                 <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:4px;">
                     <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.85em; font-weight:600;
-                                 background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7;">
+                                 background:var(--alert-success-bg-color); color:var(--alert-success-text-color); border:1px solid var(--alert-success-text-color);">
                         Config Managed
                     </span>
                     <j:if test="${it.lastUpdateDisplay != ''}">
-                        <span style="color:#888; font-size:0.85em;">
+                        <span style="color:var(--text-color-secondary); font-size:0.85em;">
                             Last synced: ${it.lastUpdateDisplay}
                         </span>
                     </j:if>
                 </div>
                 <j:if test="${it.manuallyModified}">
                     <div style="margin-top:4px; padding:4px 8px; border-radius:4px; font-size:0.85em;
-                                background:#fff3e0; color:#e65100; border:1px solid #ffcc80;">
+                                background:var(--alert-warning-bg-color); color:var(--alert-warning-text-color); border:1px solid var(--alert-warning-text-color);">
                         Manually modified at ${it.manualModificationDisplay}.
                         Changes will be overwritten on next sync.
                     </div>
                 </j:if>
                 <j:if test="${it.configReadOnly}">
-                    <div style="margin-top:4px; color:#888; font-size:0.85em;">
+                    <div style="margin-top:4px; color:var(--text-color-secondary); font-size:0.85em;">
                         Manual changes are disabled. Enable "Allow manual changes" in Config Sync settings to edit.
                     </div>
                 </j:if>
@@ -31,11 +31,11 @@
             <j:otherwise>
                 <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:4px;">
                     <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.85em; font-weight:600;
-                                 background:#e3f2fd; color:#1565c0; border:1px solid #90caf9;">
+                                 background:var(--alert-info-bg-color); color:var(--alert-info-text-color); border:1px solid var(--alert-info-text-color);">
                         Manually Configured
                     </span>
                     <j:if test="${it.lastUpdateDisplay != ''}">
-                        <span style="color:#888; font-size:0.85em;">
+                        <span style="color:var(--text-color-secondary); font-size:0.85em;">
                             Last saved: ${it.lastUpdateDisplay}
                         </span>
                     </j:if>
@@ -49,19 +49,19 @@
             <f:entry title="Name">
                 <div class="setting-main">
                     <input type="text" value="${it.name}" disabled="disabled"
-                           class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                           class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                 </div>
             </f:entry>
             <f:entry title="API URL">
                 <div class="setting-main">
                     <input type="text" value="${it.apiUrl}" disabled="disabled"
-                           class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                           class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                 </div>
             </f:entry>
             <f:entry title="Credentials">
                 <div class="setting-main">
                     <input type="text" value="${it.credentialsId}" disabled="disabled"
-                           class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                           class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                 </div>
             </f:entry>
             <f:entry title="Ignore SSL Errors">
@@ -74,19 +74,19 @@
                 <f:entry title="Instance Cap">
                     <div class="setting-main">
                         <input type="text" value="${it.instanceCap}" disabled="disabled"
-                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                     </div>
                 </f:entry>
                 <f:entry title="Operation Timeout (seconds)">
                     <div class="setting-main">
                         <input type="text" value="${it.operationTimeout}" disabled="disabled"
-                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                     </div>
                 </f:entry>
                 <f:entry title="Start VM ID">
                     <div class="setting-main">
                         <input type="text" value="${it.startVmId}" disabled="disabled"
-                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                     </div>
                 </f:entry>
                 <f:entry title="Cleanup Orphaned Agents">
@@ -102,49 +102,49 @@
                         <f:entry title="Node">
                             <div class="setting-main">
                                 <input type="text" value="${template.node}" disabled="disabled"
-                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                       class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                             </div>
                         </f:entry>
                         <f:entry title="Template VM ID">
                             <div class="setting-main">
                                 <input type="text" value="${template.templateVmId}" disabled="disabled"
-                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                       class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                             </div>
                         </f:entry>
                         <f:entry title="Labels">
                             <div class="setting-main">
                                 <input type="text" value="${template.labelString}" disabled="disabled"
-                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                       class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                             </div>
                         </f:entry>
                         <f:entry title="Executors">
                             <div class="setting-main">
                                 <input type="text" value="${template.numExecutors}" disabled="disabled"
-                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                       class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                             </div>
                         </f:entry>
                         <f:entry title="Clone Strategy">
                             <div class="setting-main">
                                 <input type="text" value="${template.cloneStrategy}" disabled="disabled"
-                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                       class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                             </div>
                         </f:entry>
                         <f:entry title="VM Username">
                             <div class="setting-main">
                                 <input type="text" value="${template.ciUser}" disabled="disabled"
-                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                       class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                             </div>
                         </f:entry>
                         <f:entry title="SSH Credentials">
                             <div class="setting-main">
                                 <input type="text" value="${template.credentialsId}" disabled="disabled"
-                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                       class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                             </div>
                         </f:entry>
                         <f:entry title="Usage">
                             <div class="setting-main">
                                 <input type="text" value="${template.mode}" disabled="disabled"
-                                       class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                       class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                             </div>
                         </f:entry>
                         <f:advanced>
@@ -152,37 +152,37 @@
                                 <f:entry title="Target Storage">
                                     <div class="setting-main">
                                         <input type="text" value="${template.targetStorage}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Target Pool">
                                     <div class="setting-main">
                                         <input type="text" value="${template.targetPool}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="CPU Cores (0 = inherit)">
                                     <div class="setting-main">
                                         <input type="text" value="${template.cores}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Memory MB (0 = inherit)">
                                     <div class="setting-main">
                                         <input type="text" value="${template.memory}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Disk Size GB (0 = inherit)">
                                     <div class="setting-main">
                                         <input type="text" value="${template.diskSizeGb}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Network Bridge">
                                     <div class="setting-main">
                                         <input type="text" value="${template.networkBridge}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                             </f:section>
@@ -190,31 +190,31 @@
                                 <f:entry title="Remote FS Root">
                                     <div class="setting-main">
                                         <input type="text" value="${template.remoteFs}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Java Version">
                                     <div class="setting-main">
                                         <input type="text" value="${template.javaVersion}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Java Path">
                                     <div class="setting-main">
                                         <input type="text" value="${template.javaPath}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="JVM Options">
                                     <div class="setting-main">
                                         <input type="text" value="${template.jvmOptions}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Name Prefix">
                                     <div class="setting-main">
                                         <input type="text" value="${template.namePrefix}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                             </f:section>
@@ -222,25 +222,25 @@
                                 <f:entry title="Idle Termination (minutes)">
                                     <div class="setting-main">
                                         <input type="text" value="${template.idleTerminationMinutes}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Instance Cap (0 = unlimited)">
                                     <div class="setting-main">
                                         <input type="text" value="${template.instanceCap}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Max Total Uses (0 = unlimited)">
                                     <div class="setting-main">
                                         <input type="text" value="${template.maxTotalUses}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Startup Wait (seconds)">
                                     <div class="setting-main">
                                         <input type="text" value="${template.startupWaitSeconds}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                             </f:section>
@@ -248,25 +248,25 @@
                                 <f:entry title="IP Configuration">
                                     <div class="setting-main">
                                         <input type="text" value="${template.ipConfig}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Nameserver">
                                     <div class="setting-main">
                                         <input type="text" value="${template.nameserver}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="Search Domain">
                                     <div class="setting-main">
                                         <input type="text" value="${template.searchDomain}" disabled="disabled"
-                                               class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed;"/>
+                                               class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed;"/>
                                     </div>
                                 </f:entry>
                                 <f:entry title="User Data Script">
                                     <div class="setting-main">
                                         <textarea disabled="disabled" rows="3"
-                                                  class="jenkins-input" style="background:#f5f5f5; color:#888; cursor:not-allowed; width:100%;">${template.userDataScript}</textarea>
+                                                  class="jenkins-input" style="background:var(--background); color:var(--text-color-secondary); cursor:not-allowed; width:100%;">${template.userDataScript}</textarea>
                                     </div>
                                 </f:entry>
                             </f:section>

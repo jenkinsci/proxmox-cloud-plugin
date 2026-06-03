@@ -43,7 +43,7 @@
                 <div id="proxmox-sync-result" style="margin-top:8px;"></div>
 
                 <j:if test="${instance.lastSyncResult != null}">
-                    <div style="margin-top:4px; color: #666; font-size: 0.9em;">
+                    <div style="margin-top:4px; color: var(--text-color-secondary); font-size: 0.9em;">
                         Previous: ${instance.lastSyncResult}
                     </div>
                 </j:if>
