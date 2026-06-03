@@ -305,15 +305,15 @@
 
             <f:advanced>
                 <f:entry title="Instance Cap" field="instanceCap">
-                    <f:textbox default="0"/>
+                    <f:number default="0" min="0" clazz="non-negative-number-required"/>
                 </f:entry>
 
                 <f:entry title="Operation Timeout (seconds)" field="operationTimeout">
-                    <f:textbox default="300"/>
+                    <f:number default="300" min="1" clazz="positive-number-required"/>
                 </f:entry>
 
                 <f:entry title="Start VM ID (0 = default)" field="startVmId">
-                    <f:textbox default="0"/>
+                    <f:number default="0" min="0" clazz="non-negative-number-required"/>
                 </f:entry>
 
                 <f:entry title="Cleanup Orphaned Agents" field="cleanupOrphanedAgents">

@@ -265,9 +265,18 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     @DataBoundSetter public void setCloneStrategy(CloneStrategy v) { this.cloneStrategy = v; }
     @DataBoundSetter public void setTargetStorage(String v) { this.targetStorage = v; }
     @DataBoundSetter public void setTargetPool(String v) { this.targetPool = v; }
-    @DataBoundSetter public void setCores(int v) { this.cores = v; }
-    @DataBoundSetter public void setMemory(int v) { this.memory = v; }
-    @DataBoundSetter public void setDiskSizeGb(int v) { this.diskSizeGb = v; }
+    @DataBoundSetter public void setCores(int v) {
+        if (v < 0) throw new IllegalArgumentException("CPU cores must be non-negative");
+        this.cores = v;
+    }
+    @DataBoundSetter public void setMemory(int v) {
+        if (v < 0) throw new IllegalArgumentException("Memory must be non-negative");
+        this.memory = v;
+    }
+    @DataBoundSetter public void setDiskSizeGb(int v) {
+        if (v < 0) throw new IllegalArgumentException("Disk size must be non-negative");
+        this.diskSizeGb = v;
+    }
     @DataBoundSetter public void setNetworkBridge(String v) { this.networkBridge = v; }
     @DataBoundSetter public void setRemoteFs(String v) { this.remoteFs = (v != null && !v.isBlank()) ? v : null; }
     @DataBoundSetter public void setMode(Node.Mode v) { this.mode = v; }
@@ -275,11 +284,23 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     @DataBoundSetter public void setJavaPath(String v) { this.javaPath = v; }
     @DataBoundSetter public void setJvmOptions(String v) { this.jvmOptions = v; }
     @DataBoundSetter public void setJavaVersion(JavaInstallation v) { this.javaVersion = v != null ? v : JavaInstallation.NONE; }
-    @DataBoundSetter public void setIdleTerminationMinutes(int v) { this.idleTerminationMinutes = v; }
-    @DataBoundSetter public void setInstanceCap(int v) { this.instanceCap = v; }
-    @DataBoundSetter public void setMaxTotalUses(int v) { this.maxTotalUses = v; }
+    @DataBoundSetter public void setIdleTerminationMinutes(int v) {
+        if (v < 0) throw new IllegalArgumentException("Idle termination minutes must be non-negative");
+        this.idleTerminationMinutes = v;
+    }
+    @DataBoundSetter public void setInstanceCap(int v) {
+        if (v < 0) throw new IllegalArgumentException("Instance cap must be non-negative");
+        this.instanceCap = v;
+    }
+    @DataBoundSetter public void setMaxTotalUses(int v) {
+        if (v < 0) throw new IllegalArgumentException("Max total uses must be non-negative");
+        this.maxTotalUses = v;
+    }
     @DataBoundSetter public void setNamePrefix(String v) { this.namePrefix = v; }
-    @DataBoundSetter public void setStartupWaitSeconds(int v) { this.startupWaitSeconds = v; }
+    @DataBoundSetter public void setStartupWaitSeconds(int v) {
+        if (v < 0) throw new IllegalArgumentException("Startup wait seconds must be non-negative");
+        this.startupWaitSeconds = v;
+    }
     @DataBoundSetter public void setCiUser(String v) { this.ciUser = v; }
     @DataBoundSetter public void setIpConfig(String v) { this.ipConfig = v; }
     @DataBoundSetter public void setNameserver(String v) { this.nameserver = v; }
@@ -297,6 +318,18 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         @Override
         public String getDisplayName() {
             return "Proxmox VM Template";
+        }
+
+        @Override
+        public ProxmoxTemplate newInstance(org.kohsuke.stapler.StaplerRequest2 req,
+                                           net.sf.json.JSONObject formData) throws FormException {
+            try {
+                return (ProxmoxTemplate) super.newInstance(req, formData);
+            } catch (LinkageError e) {
+                Throwable root = e;
+                while (root.getCause() != null) root = root.getCause();
+                throw new FormException(root.getMessage(), e, "");
+            }
         }
 
         private ProxmoxClient tryCreateClient(String apiUrl, String credentialsId,
@@ -506,11 +539,5 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return FormValidation.ok();
         }
 
-        public FormValidation doCheckNumExecutors(@QueryParameter int value) {
-            if (value <= 0) {
-                return FormValidation.error("Must be at least 1");
-            }
-            return FormValidation.ok();
-        }
     }
 }

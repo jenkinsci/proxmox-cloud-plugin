@@ -19,7 +19,7 @@
     </f:entry>
 
     <f:entry title="Number of Executors" field="numExecutors">
-        <f:textbox default="1"/>
+        <f:number default="1" min="1" clazz="positive-number-required"/>
     </f:entry>
 
     <f:entry title="Clone Strategy" field="cloneStrategy">
@@ -49,15 +49,15 @@
             </f:entry>
 
             <f:entry title="CPU Cores (0 = inherit)" field="cores">
-                <f:textbox default="0"/>
+                <f:number default="0" min="0" clazz="non-negative-number-required"/>
             </f:entry>
 
             <f:entry title="Memory MB (0 = inherit)" field="memory">
-                <f:textbox default="0"/>
+                <f:number default="0" min="0" clazz="non-negative-number-required"/>
             </f:entry>
 
             <f:entry title="Disk Size GB (0 = inherit)" field="diskSizeGb">
-                <f:textbox default="0"/>
+                <f:number default="0" min="0" clazz="non-negative-number-required"/>
             </f:entry>
 
             <f:entry title="Network Bridge" field="networkBridge">
@@ -91,19 +91,19 @@
 
         <f:section title="Lifecycle">
             <f:entry title="Idle Termination (minutes)" field="idleTerminationMinutes">
-                <f:textbox default="30"/>
+                <f:number default="30" min="0"/>
             </f:entry>
 
             <f:entry title="Instance Cap (0 = unlimited)" field="instanceCap">
-                <f:textbox default="0"/>
+                <f:number default="0" min="0" clazz="non-negative-number-required"/>
             </f:entry>
 
             <f:entry title="Max Total Uses (0 = unlimited)" field="maxTotalUses">
-                <f:textbox default="0"/>
+                <f:number default="0" min="0" clazz="non-negative-number-required"/>
             </f:entry>
 
             <f:entry title="Startup Wait (seconds)" field="startupWaitSeconds">
-                <f:textbox default="60"/>
+                <f:number default="60" min="0"/>
             </f:entry>
         </f:section>
 

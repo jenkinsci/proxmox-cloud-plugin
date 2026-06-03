@@ -253,9 +253,18 @@ public class ProxmoxCloud extends Cloud {
     @DataBoundSetter public void setApiUrl(String v) { this.apiUrl = v; resetClient(); }
     @DataBoundSetter public void setCredentialsId(String v) { this.credentialsId = v; resetClient(); }
     @DataBoundSetter public void setIgnoreSslErrors(boolean v) { this.ignoreSslErrors = v; resetClient(); }
-    @DataBoundSetter public void setInstanceCap(int v) { this.instanceCap = v; }
-    @DataBoundSetter public void setOperationTimeout(int v) { this.operationTimeout = v; }
-    @DataBoundSetter public void setStartVmId(int v) { this.startVmId = v; }
+    @DataBoundSetter public void setInstanceCap(int v) {
+        if (v < 0) throw new IllegalArgumentException("Instance cap must be non-negative");
+        this.instanceCap = v;
+    }
+    @DataBoundSetter public void setOperationTimeout(int v) {
+        if (v < 1) throw new IllegalArgumentException("Operation timeout must be at least 1");
+        this.operationTimeout = v;
+    }
+    @DataBoundSetter public void setStartVmId(int v) {
+        if (v < 0) throw new IllegalArgumentException("Start VM ID must be non-negative");
+        this.startVmId = v;
+    }
     @DataBoundSetter public void setCleanupOrphanedAgents(boolean v) { this.cleanupOrphanedAgents = v; }
     @DataBoundSetter public void setConfigManaged(boolean v) { this.configManaged = v; }
     @DataBoundSetter public void setLastSyncTimestamp(long v) { this.lastSyncTimestamp = v; }
@@ -273,7 +282,14 @@ public class ProxmoxCloud extends Cloud {
 
         @Override
         public Cloud newInstance(org.kohsuke.stapler.StaplerRequest2 req, net.sf.json.JSONObject formData) throws FormException {
-            ProxmoxCloud cloud = (ProxmoxCloud) super.newInstance(req, formData);
+            ProxmoxCloud cloud;
+            try {
+                cloud = (ProxmoxCloud) super.newInstance(req, formData);
+            } catch (LinkageError e) {
+                Throwable root = e;
+                while (root.getCause() != null) root = root.getCause();
+                throw new FormException(root.getMessage(), e, "");
+            }
             if (cloud != null) {
                 cloud.setLastConfigTimestamp(System.currentTimeMillis());
             }
@@ -350,13 +366,6 @@ public class ProxmoxCloud extends Cloud {
             }
             if (!value.startsWith("https://") && !value.startsWith("http://")) {
                 return FormValidation.error("URL must start with https:// or http://");
-            }
-            return FormValidation.ok();
-        }
-
-        public FormValidation doCheckInstanceCap(@QueryParameter int value) {
-            if (value < 0) {
-                return FormValidation.error("Must be non-negative (0 = unlimited)");
             }
             return FormValidation.ok();
         }
