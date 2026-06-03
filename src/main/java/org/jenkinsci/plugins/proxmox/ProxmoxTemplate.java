@@ -80,6 +80,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
 
     @DataBoundConstructor
     public ProxmoxTemplate(String name, String node, int templateVmId, String labelString, int numExecutors) {
+        if (name == null || name.isBlank()) throw new IllegalArgumentException("Name is required");
         this.name = name;
         this.node = node;
         this.templateVmId = templateVmId;
@@ -301,7 +302,10 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         if (v < 0) throw new IllegalArgumentException("Startup wait seconds must be non-negative");
         this.startupWaitSeconds = v;
     }
-    @DataBoundSetter public void setCiUser(String v) { this.ciUser = v; }
+    @DataBoundSetter public void setCiUser(String v) {
+        if (v == null || v.isBlank()) throw new IllegalArgumentException("VM Username is required");
+        this.ciUser = v;
+    }
     @DataBoundSetter public void setIpConfig(String v) { this.ipConfig = v; }
     @DataBoundSetter public void setNameserver(String v) { this.nameserver = v; }
     @DataBoundSetter public void setSearchDomain(String v) { this.searchDomain = v; }
@@ -489,13 +493,6 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return model;
         }
 
-        public FormValidation doCheckName(@QueryParameter String value) {
-            if (value == null || value.isBlank()) {
-                return FormValidation.error("Name is required");
-            }
-            return FormValidation.ok();
-        }
-
         public FormValidation doCheckNode(@QueryParameter String value) {
             if (value == null || value.isBlank()) {
                 return FormValidation.error("Proxmox Node is required");
@@ -510,12 +507,6 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return FormValidation.ok();
         }
 
-        public FormValidation doCheckCiUser(@QueryParameter String value) {
-            if (value == null || value.isBlank()) {
-                return FormValidation.error("VM Username is required");
-            }
-            return FormValidation.ok();
-        }
 
     }
 }

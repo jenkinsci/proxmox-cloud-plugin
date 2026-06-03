@@ -3,7 +3,7 @@
          xmlns:st="jelly:stapler">
 
     <f:entry title="Name" field="name">
-        <f:textbox/>
+        <f:textbox clazz="required"/>
     </f:entry>
 
     <f:entry title="Proxmox Node" field="node">
@@ -27,7 +27,7 @@
     </f:entry>
 
     <f:entry title="VM Username" field="ciUser">
-        <f:textbox class="proxmox-ciUser"/>
+        <f:textbox clazz="required" class="proxmox-ciUser"/>
     </f:entry>
 
     <f:entry title="SSH Credentials" field="credentialsId">
