@@ -1,11 +1,9 @@
 Behaviour.specify(".proxmox-sync-now", "proxmox-config-sync", 0, function(btn) {
     btn.addEventListener("click", function() {
         var spinner = document.getElementById('proxmox-sync-spinner');
-        var resultDiv = document.getElementById('proxmox-sync-result');
 
         btn.disabled = true;
         spinner.style.display = 'inline';
-        resultDiv.innerHTML = '';
 
         var descriptorUrl = document.querySelector('[data-descriptor-url*="ProxmoxCloudConfigSync"]');
         var baseUrl = (descriptorUrl ? descriptorUrl.getAttribute('data-descriptor-url') : '')
@@ -24,19 +22,21 @@ Behaviour.specify(".proxmox-sync-now", "proxmox-config-sync", 0, function(btn) {
         })
         .then(function(response) { return response.json(); })
         .then(function(data) {
-            var html = '';
-            if (data.success) {
-                html = '<div style="color:var(--success-color); font-weight:bold;">&#10003; ' + data.summary + '</div>';
+            var hasWarnings = data.warnings && data.warnings.length > 0;
+            var message = data.summary;
+            if (hasWarnings) {
+                message += ' (Warnings: ' + data.warnings.join('; ') + ')';
+            }
+            if (!data.success) {
+                notificationBar.show(message, notificationBar.ERROR);
+            } else if (hasWarnings) {
+                notificationBar.show(message, notificationBar.WARNING);
             } else {
-                html = '<div style="color:var(--error-color); font-weight:bold;">&#10007; ' + data.summary + '</div>';
+                notificationBar.show(message, notificationBar.SUCCESS);
             }
-            if (data.warnings && data.warnings.length > 0) {
-                html += '<div style="color:var(--warning-color); margin-top:4px;">Warnings: ' + data.warnings.join('; ') + '</div>';
-            }
-            resultDiv.innerHTML = html;
         })
         .catch(function(err) {
-            resultDiv.innerHTML = '<div style="color:var(--error-color);">Request failed: ' + err.message + '</div>';
+            notificationBar.show('Sync request failed: ' + err.message, notificationBar.ERROR);
         })
         .finally(function() {
             btn.disabled = false;

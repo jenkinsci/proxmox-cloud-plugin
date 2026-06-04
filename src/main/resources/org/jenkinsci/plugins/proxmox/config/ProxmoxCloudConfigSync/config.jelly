@@ -40,7 +40,6 @@
                             class="jenkins-button jenkins-button--primary proxmox-sync-now">Sync Now</button>
                     <span id="proxmox-sync-spinner" style="display:none">Syncing...</span>
                 </div>
-                <div id="proxmox-sync-result" style="margin-top:8px;"></div>
 
                 <j:if test="${instance.lastSyncResult != null}">
                     <div style="margin-top:4px; color: var(--text-color-secondary); font-size: 0.9em;">
