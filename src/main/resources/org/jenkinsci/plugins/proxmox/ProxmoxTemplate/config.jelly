@@ -6,12 +6,21 @@
         <f:textbox clazz="required"/>
     </f:entry>
 
+    <!-- API-populated selects re-fetch from Proxmox on load via a fill that reads the cloud's
+         apiUrl/credentials. In read-only mode those parent fields render as text, not inputs, so
+         the fill can't reach the API; show the saved value as read-only text instead. -->
     <f:entry title="Proxmox Node" field="node">
-        <f:select/>
+        <j:choose>
+            <j:when test="${readOnlyMode}"><f:textbox/></j:when>
+            <j:otherwise><f:select/></j:otherwise>
+        </j:choose>
     </f:entry>
 
     <f:entry title="Template VM ID" field="templateVmId">
-        <f:select/>
+        <j:choose>
+            <j:when test="${readOnlyMode}"><f:textbox/></j:when>
+            <j:otherwise><f:select/></j:otherwise>
+        </j:choose>
     </f:entry>
 
     <f:entry title="Labels" field="labelString">
@@ -32,7 +41,10 @@
     </f:entry>
 
     <f:entry title="SSH Credentials" field="credentialsId">
-        <c:select/>
+        <j:choose>
+            <j:when test="${readOnlyMode}"><f:textbox/></j:when>
+            <j:otherwise><c:select/></j:otherwise>
+        </j:choose>
     </f:entry>
 
     <f:entry title="Usage" field="mode">
@@ -42,11 +54,17 @@
     <f:advanced>
         <f:section title="Proxmox Resources">
             <f:entry title="Target Storage" field="targetStorage">
-                <f:select/>
+                <j:choose>
+                    <j:when test="${readOnlyMode}"><f:textbox/></j:when>
+                    <j:otherwise><f:select/></j:otherwise>
+                </j:choose>
             </f:entry>
 
             <f:entry title="Target Pool" field="targetPool">
-                <f:select/>
+                <j:choose>
+                    <j:when test="${readOnlyMode}"><f:textbox/></j:when>
+                    <j:otherwise><f:select/></j:otherwise>
+                </j:choose>
             </f:entry>
 
             <f:entry title="CPU Cores (0 = inherit)" field="cores">
@@ -65,7 +83,10 @@
             </f:entry>
 
             <f:entry title="Network Bridge" field="networkBridge">
-                <f:select/>
+                <j:choose>
+                    <j:when test="${readOnlyMode}"><f:textbox/></j:when>
+                    <j:otherwise><f:select/></j:otherwise>
+                </j:choose>
             </f:entry>
         </f:section>
 
@@ -134,11 +155,13 @@
         </f:section>
     </f:advanced>
 
-    <f:entry>
-        <div align="right">
-            <f:repeatableDeleteButton/>
-        </div>
-    </f:entry>
+    <j:if test="${!readOnlyMode}">
+        <f:entry>
+            <div align="right">
+                <f:repeatableDeleteButton/>
+            </div>
+        </f:entry>
+    </j:if>
 
     <st:adjunct includes="org.jenkinsci.plugins.proxmox.ProxmoxTemplate.remoteFs-sync"/>
 
