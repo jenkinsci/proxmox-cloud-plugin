@@ -7,6 +7,7 @@ public record VirtualMachine(
         String name,
         String status,
         String node,
+        long uptime,
         @SerializedName("template") int templateFlag
 ) {
     public boolean isTemplate() {

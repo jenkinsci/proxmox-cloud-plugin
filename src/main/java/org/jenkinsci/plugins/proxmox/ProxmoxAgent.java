@@ -6,7 +6,6 @@ import hudson.model.Node;
 import hudson.model.TaskListener;
 import hudson.slaves.AbstractCloudComputer;
 import hudson.slaves.AbstractCloudSlave;
-import hudson.slaves.EphemeralNode;
 import hudson.slaves.NodeProperty;
 import hudson.slaves.NodePropertyDescriptor;
 import hudson.util.DescribableList;
@@ -21,7 +20,7 @@ import java.io.IOException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class ProxmoxAgent extends AbstractCloudSlave implements EphemeralNode {
+public class ProxmoxAgent extends AbstractCloudSlave {
 
     private static final Logger LOGGER = Logger.getLogger(ProxmoxAgent.class.getName());
 
@@ -30,7 +29,9 @@ public class ProxmoxAgent extends AbstractCloudSlave implements EphemeralNode {
     private final String proxmoxNode;
     private final int vmId;
     private final long createdAt;
-    private final java.util.concurrent.atomic.AtomicInteger totalUses = new java.util.concurrent.atomic.AtomicInteger();
+    // Plain int (not AtomicInteger): the node is now persisted, and Jenkins' XStream2 refuses to
+    // marshal AtomicInteger. Thread safety comes from the synchronized accessors below.
+    private int totalUses;
 
     public ProxmoxAgent(String name, String remoteFs, int numExecutors, Node.Mode mode,
                          String labelString, ProxmoxLauncher launcher,
@@ -85,11 +86,6 @@ public class ProxmoxAgent extends AbstractCloudSlave implements EphemeralNode {
     }
 
     @Override
-    public Node asNode() {
-        return this;
-    }
-
-    @Override
     @SuppressWarnings("unchecked")
     public Node reconfigure(StaplerRequest2 req, JSONObject form) throws Descriptor.FormException {
         if (form == null) {
@@ -139,12 +135,12 @@ public class ProxmoxAgent extends AbstractCloudSlave implements EphemeralNode {
         return createdAt;
     }
 
-    public int getTotalUses() {
-        return totalUses.get();
+    public synchronized int getTotalUses() {
+        return totalUses;
     }
 
-    public void incrementUses() {
-        totalUses.incrementAndGet();
+    public synchronized void incrementUses() {
+        totalUses++;
     }
 
     @Extension

@@ -74,6 +74,24 @@ public class ProxmoxCloudTest {
         assertFalse(cloud.canProvision(state));
     }
 
+    @Test
+    public void testOrphanCleanupGracePeriodDefault() {
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        assertEquals(300, cloud.getOrphanCleanupGracePeriodSeconds());
+    }
+
+    @Test
+    public void testOrphanCleanupGracePeriodAccepted() {
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        cloud.setOrphanCleanupGracePeriodSeconds(30);
+        assertEquals(30, cloud.getOrphanCleanupGracePeriodSeconds());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testOrphanCleanupGracePeriodRejectsBelowOne() {
+        new ProxmoxCloud("test-cloud").setOrphanCleanupGracePeriodSeconds(0);
+    }
+
     private ProxmoxCloud createTestCloud() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setCloneStrategy(CloneStrategy.FULL);

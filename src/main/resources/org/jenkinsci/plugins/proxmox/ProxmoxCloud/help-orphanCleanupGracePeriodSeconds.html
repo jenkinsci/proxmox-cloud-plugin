@@ -1,0 +1,26 @@
+<div>
+    How long a resource must have existed before the periodic orphan cleanup will act on it.
+    This grace period guards against reaping resources that are still being set up. It applies
+    to both directions of cleanup (only relevant when <b>Cleanup Orphaned Agents</b> is enabled):
+
+    <ul>
+        <li>
+            <b>Orphaned VMs</b> &mdash; a <code>jenkins-managed</code> VM that has no corresponding
+            Jenkins node is only destroyed once it has been <i>running</i> longer than this period.
+            Provisioning clones (and tags) a VM well before its agent is registered, so without the
+            grace a cleanup pass could destroy a VM that is still mid-provisioning. A VM that is
+            <i>not</i> running is treated as already dead and destroyed regardless of this value.
+        </li>
+        <li>
+            <b>Dead agent nodes</b> &mdash; a persisted agent whose backing VM is gone, or present
+            but not running, is only removed (and any stopped VM destroyed) once the agent has
+            existed longer than this period. This avoids tearing down an agent whose VM is briefly
+            stopped while it boots.
+        </li>
+    </ul>
+
+    Lower it to reclaim leaked VMs and dead nodes sooner; raise it if your provisioning (clone,
+    boot, cloud-init) regularly takes longer than the default. Cleanup runs roughly every 10
+    minutes, so a resource is reaped on the first cleanup pass after its grace period elapses.
+    Default: 300 seconds (5 minutes). Minimum: 1.
+</div>

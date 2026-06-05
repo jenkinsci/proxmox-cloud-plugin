@@ -136,11 +136,12 @@ public class ProxmoxClientTest {
     @Test
     public void testGetVmStatus() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/300/status/current"))
-                .willReturn(okJson("{\"data\":{\"vmid\":300,\"name\":\"test-vm\",\"status\":\"running\",\"template\":0}}")));
+                .willReturn(okJson("{\"data\":{\"vmid\":300,\"name\":\"test-vm\",\"status\":\"running\",\"uptime\":3600,\"template\":0}}")));
 
         VirtualMachine vm = client.getVmStatus("pve1", 300);
         assertEquals(300, vm.vmid());
         assertEquals("running", vm.status());
+        assertEquals(3600, vm.uptime());
         assertFalse(vm.isTemplate());
     }
 

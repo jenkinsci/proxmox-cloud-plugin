@@ -96,9 +96,13 @@
                       checkMessage="Start VM ID must be >= 0"/>
         </f:entry>
 
-        <f:entry title="Cleanup Orphaned Agents" field="cleanupOrphanedAgents">
-            <f:checkbox default="false"/>
-        </f:entry>
+        <f:optionalBlock title="Cleanup Orphaned Agents" field="cleanupOrphanedAgents"
+                         inline="true" checked="${instance.cleanupOrphanedAgents}">
+            <f:entry title="Orphan Cleanup Grace Period (seconds)" field="orphanCleanupGracePeriodSeconds">
+                <f:number default="300" min="1" clazz="positive-number-required"
+                          checkMessage="Must be at least 1 second"/>
+            </f:entry>
+        </f:optionalBlock>
     </f:advanced>
 
     <f:entry title="Agent Templates">

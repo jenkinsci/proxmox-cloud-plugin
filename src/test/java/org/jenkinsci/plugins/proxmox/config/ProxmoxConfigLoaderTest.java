@@ -189,6 +189,7 @@ public class ProxmoxConfigLoaderTest {
         config.put("operationTimeoutSec", 600);
         config.put("startVmId", 1000);
         config.put("cleanupOrphanedAgents", true);
+        config.put("orphanCleanupGracePeriodSeconds", 120);
 
         ProxmoxCloud cloud = loader.createProxmoxCloud(config);
 
@@ -200,6 +201,7 @@ public class ProxmoxConfigLoaderTest {
         assertEquals(600, cloud.getOperationTimeout());
         assertEquals(1000, cloud.getStartVmId());
         assertTrue(cloud.isCleanupOrphanedAgents());
+        assertEquals(120, cloud.getOrphanCleanupGracePeriodSeconds());
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -223,6 +225,7 @@ public class ProxmoxConfigLoaderTest {
         assertEquals(300, cloud.getOperationTimeout());
         assertEquals(0, cloud.getStartVmId());
         assertFalse(cloud.isCleanupOrphanedAgents());
+        assertEquals(300, cloud.getOrphanCleanupGracePeriodSeconds());
     }
 
     // ---- createProxmoxTemplate tests ----

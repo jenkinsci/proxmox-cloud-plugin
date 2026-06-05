@@ -55,6 +55,7 @@ public class ProxmoxCloud extends Cloud {
     private int operationTimeout = 300;
     private int startVmId;
     private boolean cleanupOrphanedAgents;
+    private int orphanCleanupGracePeriodSeconds = 300;
     private boolean configManaged;
     private long lastSyncTimestamp;
     private long lastConfigTimestamp;
@@ -69,6 +70,16 @@ public class ProxmoxCloud extends Cloud {
     @DataBoundConstructor
     public ProxmoxCloud(String name) {
         super(name);
+    }
+
+    protected Object readResolve() {
+        // Field added after initial release; clouds persisted before it (or with an out-of-range
+        // value) deserialize with 0 because XStream skips field initializers. Restore the default
+        // so orphan cleanup never acts with a zero grace period.
+        if (orphanCleanupGracePeriodSeconds < 1) {
+            orphanCleanupGracePeriodSeconds = 300;
+        }
+        return this;
     }
 
     private Object getProvisionLock() {
@@ -222,6 +233,7 @@ public class ProxmoxCloud extends Cloud {
     public int getInstanceCap() { return instanceCap; }
     public int getOperationTimeout() { return operationTimeout; }
     public int getStartVmId() { return startVmId; }
+    public int getOrphanCleanupGracePeriodSeconds() { return orphanCleanupGracePeriodSeconds; }
     public boolean isCleanupOrphanedAgents() { return cleanupOrphanedAgents; }
     public boolean isConfigManaged() { return configManaged; }
     public long getLastSyncTimestamp() { return lastSyncTimestamp; }
@@ -266,6 +278,10 @@ public class ProxmoxCloud extends Cloud {
         this.startVmId = v;
     }
     @DataBoundSetter public void setCleanupOrphanedAgents(boolean v) { this.cleanupOrphanedAgents = v; }
+    @DataBoundSetter public void setOrphanCleanupGracePeriodSeconds(int v) {
+        if (v < 1) throw new IllegalArgumentException("Agent removal grace period must be at least 1 second");
+        this.orphanCleanupGracePeriodSeconds = v;
+    }
     @DataBoundSetter public void setConfigManaged(boolean v) { this.configManaged = v; }
     @DataBoundSetter public void setLastSyncTimestamp(long v) { this.lastSyncTimestamp = v; }
     @DataBoundSetter public void setLastConfigTimestamp(long v) { this.lastConfigTimestamp = v; }
@@ -376,6 +392,13 @@ public class ProxmoxCloud extends Cloud {
             }
             if (value >= 1 && value < 100) {
                 return FormValidation.error("Proxmox reserves VM IDs 1-99");
+            }
+            return FormValidation.ok();
+        }
+
+        public FormValidation doCheckOrphanCleanupGracePeriodSeconds(@QueryParameter int value) {
+            if (value < 1) {
+                return FormValidation.error("Must be at least 1 second");
             }
             return FormValidation.ok();
         }

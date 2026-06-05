@@ -297,6 +297,8 @@ cloudDefaults:
   ignoreSslErrors: true
   instanceCap: 10
   operationTimeoutSec: 300
+  cleanupOrphanedAgents: true
+  orphanCleanupGracePeriodSeconds: 300   # grace before reaping orphaned VMs / dead agent nodes
 
 cloudConfigurations:
   myCluster:
