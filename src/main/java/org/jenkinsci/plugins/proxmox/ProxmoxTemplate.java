@@ -132,13 +132,12 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         String staticIp = parseStaticIp(ipConfig);
         ProxmoxLauncher launcher = new ProxmoxLauncher(
                 credentialsId, javaPath, jvmOptions, startupWaitSeconds, staticIp, javaVersion);
-        ProxmoxRetentionStrategy retention = new ProxmoxRetentionStrategy(
-                idleTerminationMinutes, maxTotalUses);
 
         return new ProxmoxAgent(
                 vmName, remoteFs, numExecutors, mode, labelString,
-                launcher, retention,
-                cloud.name, name, node, newVmId);
+                launcher,
+                cloud.name, name, node, newVmId,
+                idleTerminationMinutes, maxTotalUses);
     }
 
     private String derivePublicKeyFromCredential(java.io.PrintStream log) {

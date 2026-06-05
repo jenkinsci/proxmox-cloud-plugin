@@ -38,6 +38,26 @@
 
   <f:slave-mode name="mode" node="${it}" />
 
+  <f:section title="Lifecycle">
+    <f:entry title="Idle Termination (minutes, 0 = never)" field="idleTerminationMinutes">
+      <f:number default="30" min="0" clazz="non-negative-number-required"
+                checkMessage="Idle termination minutes must be >= 0"/>
+    </f:entry>
+
+    <f:entry title="Instance Cap (template, 0 = no limit)" field="instanceCap">
+      <f:readOnlyTextbox/>
+    </f:entry>
+
+    <f:entry title="Max Total Uses (0 = unlimited)" field="maxTotalUses">
+      <f:number default="0" min="0" clazz="non-negative-number-required"
+                checkMessage="Max total uses must be >= 0"/>
+    </f:entry>
+
+    <f:entry title="Builds Run" field="totalUses">
+      <f:readOnlyTextbox/>
+    </f:entry>
+  </f:section>
+
   <f:descriptorList title="Node Properties"
                     descriptors="${descriptor.nodePropertyDescriptors(it)}"
                     field="nodeProperties" />

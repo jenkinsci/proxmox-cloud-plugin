@@ -29,25 +29,34 @@ public class ProxmoxAgent extends AbstractCloudSlave {
     private final String proxmoxNode;
     private final int vmId;
     private final long createdAt;
+    // Lifecycle settings owned by the agent (seeded from the template at provision time) so they can
+    // be overridden per-agent from its config page — e.g. to keep one VM alive for diagnostics. The
+    // stateless ProxmoxRetentionStrategy reads these live. volatile (not AtomicInteger): they are set
+    // from the stapler request thread and read from the retention-check thread, both plain
+    // assignments with no read-modify-write, so visibility is all that's needed.
+    private volatile int idleTerminationMinutes;
+    private volatile int maxTotalUses;
     // Plain int (not AtomicInteger): the node is now persisted, and Jenkins' XStream2 refuses to
     // marshal AtomicInteger. Thread safety comes from the synchronized accessors below.
     private int totalUses;
 
     public ProxmoxAgent(String name, String remoteFs, int numExecutors, Node.Mode mode,
                          String labelString, ProxmoxLauncher launcher,
-                         ProxmoxRetentionStrategy retentionStrategy,
                          String cloudName, String templateName, String proxmoxNode,
-                         int vmId) throws Descriptor.FormException, IOException {
+                         int vmId, int idleTerminationMinutes, int maxTotalUses)
+            throws Descriptor.FormException, IOException {
         super(name, remoteFs, launcher);
         setNumExecutors(numExecutors);
         setMode(mode);
         setLabelString(labelString);
-        setRetentionStrategy(retentionStrategy);
         this.cloudName = cloudName;
         this.templateName = templateName;
         this.proxmoxNode = proxmoxNode;
         this.vmId = vmId;
+        this.idleTerminationMinutes = idleTerminationMinutes;
+        this.maxTotalUses = maxTotalUses;
         this.createdAt = System.currentTimeMillis();
+        setRetentionStrategy(new ProxmoxRetentionStrategy());
     }
 
     @Override
@@ -91,11 +100,24 @@ public class ProxmoxAgent extends AbstractCloudSlave {
         if (form == null) {
             return null;
         }
+        int idle = form.optInt("idleTerminationMinutes", idleTerminationMinutes);
+        int maxUses = form.optInt("maxTotalUses", maxTotalUses);
+        if (idle < 0) {
+            throw new Descriptor.FormException("Idle termination minutes must be non-negative",
+                    "idleTerminationMinutes");
+        }
+        if (maxUses < 0) {
+            throw new Descriptor.FormException("Max total uses must be non-negative", "maxTotalUses");
+        }
+        // instanceCap is a template-level fleet limit, shown read-only here; never read it back.
+
         try {
             setNodeDescription(form.optString("nodeDescription", ""));
             setNumExecutors(form.optInt("numExecutors", 1));
             setLabelString(form.optString("labelString", ""));
             setMode(Mode.valueOf(form.optString("mode", Mode.NORMAL.name())));
+            this.idleTerminationMinutes = idle;
+            this.maxTotalUses = maxUses;
 
             if (form.has("nodeProperties")) {
                 DescribableList<NodeProperty<?>, NodePropertyDescriptor> props = getNodeProperties();
@@ -129,6 +151,27 @@ public class ProxmoxAgent extends AbstractCloudSlave {
 
     public int getVmId() {
         return vmId;
+    }
+
+    public int getIdleTerminationMinutes() {
+        return idleTerminationMinutes;
+    }
+
+    public int getMaxTotalUses() {
+        return maxTotalUses;
+    }
+
+    /**
+     * Template-level instance cap, shown read-only on the agent config page. Reads through to the
+     * owning template; returns 0 (no limit) if the cloud or template no longer exists.
+     */
+    public int getInstanceCap() {
+        ProxmoxCloud cloud = getCloud();
+        if (cloud == null) {
+            return 0;
+        }
+        ProxmoxTemplate template = cloud.getTemplateByName(templateName);
+        return template != null ? template.getInstanceCap() : 0;
     }
 
     public long getCreatedAt() {

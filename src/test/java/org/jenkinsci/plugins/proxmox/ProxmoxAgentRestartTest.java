@@ -25,9 +25,8 @@ public class ProxmoxAgentRestartTest {
     public void agentSurvivesRestart() {
         rr.then(r -> {
             ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaInstallation.NONE);
-            ProxmoxRetentionStrategy retention = new ProxmoxRetentionStrategy(10, 0);
             ProxmoxAgent agent = new ProxmoxAgent("restart-agent", "/home/jenkins", 1, Node.Mode.NORMAL,
-                    "linux", launcher, retention, "test-cloud", "test-template", "pve1", 307);
+                    "linux", launcher, "test-cloud", "test-template", "pve1", 307, 10, 0);
             agent.incrementUses();
             agent.incrementUses();
             r.jenkins.addNode(agent);

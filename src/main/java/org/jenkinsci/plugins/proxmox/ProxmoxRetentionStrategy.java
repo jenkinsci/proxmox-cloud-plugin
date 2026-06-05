@@ -9,12 +9,10 @@ public class ProxmoxRetentionStrategy extends RetentionStrategy<ProxmoxComputer>
 
     private static final Logger LOGGER = Logger.getLogger(ProxmoxRetentionStrategy.class.getName());
 
-    private final int idleTerminationMinutes;
-    private final int maxTotalUses;
-
-    public ProxmoxRetentionStrategy(int idleTerminationMinutes, int maxTotalUses) {
-        this.idleTerminationMinutes = idleTerminationMinutes;
-        this.maxTotalUses = maxTotalUses;
+    // Stateless: the idle-timeout and max-uses limits live on the ProxmoxAgent (seeded from the
+    // template, overridable per-agent) and are read live below, so an edit on the agent config page
+    // takes effect on the next check without rebuilding the strategy.
+    public ProxmoxRetentionStrategy() {
     }
 
     @Override
@@ -28,12 +26,14 @@ public class ProxmoxRetentionStrategy extends RetentionStrategy<ProxmoxComputer>
             return 1;
         }
 
+        int maxTotalUses = agent.getMaxTotalUses();
         if (maxTotalUses > 0 && agent.getTotalUses() >= maxTotalUses) {
             LOGGER.fine("Agent " + c.getName() + " reached max uses (" + maxTotalUses + "), terminating");
             terminate(agent);
             return 1;
         }
 
+        int idleTerminationMinutes = agent.getIdleTerminationMinutes();
         if (idleTerminationMinutes > 0 && c.isIdle()) {
             long idleMs = System.currentTimeMillis() - c.getIdleStartMilliseconds();
             long thresholdMs = (long) idleTerminationMinutes * 60 * 1000;

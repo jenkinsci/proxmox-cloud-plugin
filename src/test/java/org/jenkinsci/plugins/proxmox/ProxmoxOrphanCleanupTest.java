@@ -57,9 +57,8 @@ public class ProxmoxOrphanCleanupTest {
 
     private ProxmoxAgent newAgent(String name, String node, int vmId) throws Exception {
         ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaInstallation.NONE);
-        ProxmoxRetentionStrategy retention = new ProxmoxRetentionStrategy(10, 0);
         return new ProxmoxAgent(name, "/home/jenkins", 1, Node.Mode.NORMAL, "linux",
-                launcher, retention, "test-cloud", "test-template", node, vmId);
+                launcher, "test-cloud", "test-template", node, vmId, 10, 0);
     }
 
     /** Make an agent look older than the grace period so cleanup will act on it. */
