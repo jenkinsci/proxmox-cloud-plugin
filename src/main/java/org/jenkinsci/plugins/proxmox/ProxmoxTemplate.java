@@ -133,8 +133,11 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         ProxmoxLauncher launcher = new ProxmoxLauncher(
                 credentialsId, javaPath, jvmOptions, startupWaitSeconds, staticIp, javaVersion);
 
+        // Use getRemoteFs() rather than the raw field: a blank Remote FS Root is stored as null
+        // (see setRemoteFs), and an agent with a null remoteFS NPEs in
+        // SSHLauncher.getWorkingDirectory() at launch.
         return new ProxmoxAgent(
-                vmName, remoteFs, numExecutors, mode, labelString,
+                vmName, getRemoteFs(), numExecutors, mode, labelString,
                 launcher,
                 cloud.name, name, node, newVmId,
                 idleTerminationMinutes, maxTotalUses);

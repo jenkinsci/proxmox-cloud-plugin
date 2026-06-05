@@ -65,4 +65,33 @@ public class ProxmoxTemplateTest {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 0);
         assertEquals(1, template.getNumExecutors());
     }
+
+    @Test
+    public void getRemoteFsKeepsExplicitValue() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
+        template.setRemoteFs("/data/jenkins");
+        assertEquals("/data/jenkins", template.getRemoteFs());
+    }
+
+    @Test
+    public void getRemoteFsFallsBackToCiUserHomeWhenBlank() {
+        // A blank Remote FS Root is stored as null by setRemoteFs; getRemoteFs() must still return a
+        // usable path. Issue #18: provision() previously passed the raw null straight to the agent,
+        // which then NPE'd in SSHLauncher.getWorkingDirectory() at launch.
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
+        template.setCiUser("builder");
+        template.setRemoteFs("");
+        assertEquals("/home/builder/agent", template.getRemoteFs());
+    }
+
+    @Test
+    public void getRemoteFsIsNeverBlank() {
+        // Whitespace-only field and no ciUser: still a non-blank default, never null/blank.
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
+        template.setRemoteFs("   ");
+        String fs = template.getRemoteFs();
+        assertNotNull(fs);
+        assertFalse(fs.isBlank());
+        assertEquals("/home/ubuntu/agent", fs);
+    }
 }
