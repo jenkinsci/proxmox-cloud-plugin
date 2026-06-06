@@ -75,7 +75,6 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     private String ipConfig;
     private String nameserver;
     private String searchDomain;
-    private String userDataScript;
 
     private transient Set<LabelAtom> labelSet;
 
@@ -281,7 +280,6 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public String getIpConfig() { return ipConfig; }
     public String getNameserver() { return nameserver; }
     public String getSearchDomain() { return searchDomain; }
-    public String getUserDataScript() { return userDataScript; }
 
     // Setters
     @DataBoundSetter public void setCloneStrategy(CloneStrategy v) { this.cloneStrategy = v; }
@@ -334,7 +332,6 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     @DataBoundSetter public void setIpConfig(String v) { this.ipConfig = v; }
     @DataBoundSetter public void setNameserver(String v) { this.nameserver = v; }
     @DataBoundSetter public void setSearchDomain(String v) { this.searchDomain = v; }
-    @DataBoundSetter public void setUserDataScript(String v) { this.userDataScript = v; }
 
     @Override
     public Descriptor<ProxmoxTemplate> getDescriptor() {

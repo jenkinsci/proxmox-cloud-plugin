@@ -262,7 +262,7 @@ Under **Advanced → Cloud-Init**:
 
 The SSH public key is automatically derived from the SSH credential selected above and injected into the VM via cloud-init.
 
-These fields map to Proxmox's built-in cloud-init parameters (`ciuser`, `sshkeys`, `ipconfig0`, `nameserver`, `searchdomain`), which the plugin sets through the API. Free-form cloud-init user-data is a separate mechanism that is not currently supported (see [Known limitations](#known-limitations)).
+These fields map to Proxmox's built-in cloud-init parameters (`ciuser`, `sshkeys`, `ipconfig0`, `nameserver`, `searchdomain`), which the plugin sets through the API.
 
 #### Lifecycle Settings (Advanced)
 
@@ -537,16 +537,7 @@ spikes, routing jobs to either by label.
 - **SSH only.** Agents connect over SSH; there is no inbound JNLP/WebSocket launcher. This is a
   design choice, not a limitation of the Proxmox API: the controller dials out to each agent over
   SSH once cloud-init has injected the key, which keeps provisioning simple and matches the EC2
-  plugin's default for Unix hosts. It is unrelated to the user-data limitation below.
-- **User Data Script is not applied**
-  ([#23](https://github.com/aidanc/proxmox-cloud-plugin/issues/23)). Custom cloud-init user-data
-  needs a snippet referenced through `cicustom`, and the Proxmox API cannot store snippets: its
-  storage upload endpoint only accepts `content=iso|vztmpl|import`. The snippet would have to be
-  placed on the Proxmox host filesystem out of band (for example copied over SSH to the host under
-  `/var/lib/vz/snippets/`), which the plugin does not do, so the field is ignored. The native
-  cloud-init parameters (user, SSH key, IP, DNS) are unaffected and work normally. Free-form
-  user-data could be supported on request, but would require pre-staging the snippet on the Proxmox
-  host yourself.
+  plugin's default for Unix hosts.
 
 ## Building from Source
 

@@ -153,10 +153,6 @@
             <f:entry title="Search Domain" field="searchDomain">
                 <f:textbox/>
             </f:entry>
-
-            <f:entry title="User Data Script" field="userDataScript">
-                <f:textarea/>
-            </f:entry>
         </f:section>
     </f:advanced>
 

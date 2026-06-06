@@ -276,9 +276,6 @@ public class ProxmoxConfigLoader {
         if (configMap.containsKey("searchDomain")) {
             template.setSearchDomain(getStr(configMap, "searchDomain", null));
         }
-        if (configMap.containsKey("userDataScript")) {
-            template.setUserDataScript(getStr(configMap, "userDataScript", null));
-        }
 
         return template;
     }

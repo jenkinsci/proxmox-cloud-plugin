@@ -260,7 +260,6 @@ public class ProxmoxConfigLoaderTest {
         config.put("ipConfig", "ip=10.0.0.5/24,gw=10.0.0.1");
         config.put("nameserver", "8.8.8.8");
         config.put("searchDomain", "example.com");
-        config.put("userDataScript", "#!/bin/bash\necho hello");
 
         ProxmoxTemplate template = loader.createProxmoxTemplate(config);
 
@@ -291,7 +290,6 @@ public class ProxmoxConfigLoaderTest {
         assertEquals("ip=10.0.0.5/24,gw=10.0.0.1", template.getIpConfig());
         assertEquals("8.8.8.8", template.getNameserver());
         assertEquals("example.com", template.getSearchDomain());
-        assertEquals("#!/bin/bash\necho hello", template.getUserDataScript());
     }
 
     @Test(expected = IllegalArgumentException.class)
