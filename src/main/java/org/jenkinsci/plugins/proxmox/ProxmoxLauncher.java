@@ -75,7 +75,25 @@ public class ProxmoxLauncher extends ComputerLauncher {
         }
 
         delegate = new SSHLauncher(host, SSH_PORT, sshCredentialsId);
+        configureDelegate(delegate);
         delegate.launch(computer, listener);
+    }
+
+    /**
+     * Forward the agent-process tunables that the 3-arg {@link SSHLauncher} constructor does not take.
+     * JVM options always apply (they configure the remoting JVM however java got onto the agent); the
+     * java path applies only when no JDK was auto-installed (per the field's help text). A blank or
+     * default {@code java} path is left unset so SSHLauncher keeps its own java auto-detection rather
+     * than being pinned to {@code java} on the PATH. Package-private for unit testing.
+     */
+    void configureDelegate(SSHLauncher launcher) {
+        if (jvmOptions != null && !jvmOptions.isBlank()) {
+            launcher.setJvmOptions(jvmOptions);
+        }
+        if (javaVersion == JavaInstallation.NONE
+                && javaPath != null && !javaPath.isBlank() && !"java".equals(javaPath)) {
+            launcher.setJavaPath(javaPath);
+        }
     }
 
     @Override
