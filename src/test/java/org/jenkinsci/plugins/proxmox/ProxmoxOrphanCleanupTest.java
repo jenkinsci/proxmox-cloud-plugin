@@ -87,12 +87,15 @@ public class ProxmoxOrphanCleanupTest {
 
     // --- findDeadNodes: pure decision logic ---
 
+    /** No agent has reported an offline time (all online/connecting). */
+    private static final Map<ProxmoxAgent, Long> ALL_ONLINE = Map.of();
+
     @Test
     public void findDeadNodes_retainsRunningVm() throws Exception {
         ProxmoxAgent agent = newAgent("a", "pve1", 300);
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
         assertTrue(ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
-                farFuture(), NO_GRACE).isEmpty());
+                ALL_ONLINE, farFuture(), NO_GRACE).isEmpty());
     }
 
     @Test
@@ -100,7 +103,7 @@ public class ProxmoxOrphanCleanupTest {
         ProxmoxAgent agent = newAgent("a", "pve1", 301);
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
         List<DeadAgent> dead = ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
-                farFuture(), NO_GRACE);
+                ALL_ONLINE, farFuture(), NO_GRACE);
         assertEquals(1, dead.size());
         assertEquals(301, dead.get(0).agent().getVmId());
         assertFalse("gone VM => nothing to destroy", dead.get(0).vmExists());
@@ -111,7 +114,7 @@ public class ProxmoxOrphanCleanupTest {
         ProxmoxAgent agent = newAgent("a", "pve1", 301);
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(301, "stopped"));
         List<DeadAgent> dead = ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
-                farFuture(), NO_GRACE);
+                ALL_ONLINE, farFuture(), NO_GRACE);
         assertEquals(1, dead.size());
         assertEquals(301, dead.get(0).agent().getVmId());
         assertTrue("stopped VM still exists and must be destroyed", dead.get(0).vmExists());
@@ -123,7 +126,7 @@ public class ProxmoxOrphanCleanupTest {
         // pve1 absent from the map => its VM listing failed => never conclude the VM is gone/stopped.
         Map<String, Map<Integer, String>> status = new HashMap<>();
         assertTrue(ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
-                farFuture(), NO_GRACE).isEmpty());
+                ALL_ONLINE, farFuture(), NO_GRACE).isEmpty());
     }
 
     @Test
@@ -132,7 +135,7 @@ public class ProxmoxOrphanCleanupTest {
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
         // Agent is ~0s old; with a 600s grace it must be left alone despite the VM being gone.
         List<DeadAgent> dead = ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
-                agent.getCreatedAt() + 1000, 600_000L);
+                ALL_ONLINE, agent.getCreatedAt() + 1000, 600_000L);
         assertTrue(dead.isEmpty());
     }
 
@@ -145,13 +148,54 @@ public class ProxmoxOrphanCleanupTest {
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running", 302, "stopped"));
 
         List<DeadAgent> dead = ProxmoxOrphanCleanup.findDeadNodes(
-                List.of(running, gone, stopped, unqueried), status, farFuture(), NO_GRACE);
+                List.of(running, gone, stopped, unqueried), status, ALL_ONLINE, farFuture(), NO_GRACE);
 
         assertEquals(2, dead.size());
         DeadAgent goneResult = dead.stream().filter(d -> d.agent().getVmId() == 301).findFirst().orElseThrow();
         DeadAgent stoppedResult = dead.stream().filter(d -> d.agent().getVmId() == 302).findFirst().orElseThrow();
         assertFalse(goneResult.vmExists());
         assertTrue(stoppedResult.vmExists());
+    }
+
+    // --- findDeadNodes: offline-with-running-VM zombies (issue #16) ---
+
+    @Test
+    public void findDeadNodes_flagsRunningVmWhoseChannelIsOfflineBeyondGrace() throws Exception {
+        ProxmoxAgent agent = newAgent("zombie", "pve1", 300);
+        Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
+        long now = agent.getCreatedAt() + 600_000L;          // past the createdAt grace
+        long offlineSince = now - 120_000L;                  // channel dead for 2 min
+        Map<ProxmoxAgent, Long> offline = Map.of(agent, offlineSince);
+
+        List<DeadAgent> dead = ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
+                offline, now, 60_000L);                      // 60s grace
+
+        assertEquals(1, dead.size());
+        assertTrue("running VM still exists and must be destroyed", dead.get(0).vmExists());
+        assertEquals("flagged because the channel is offline, not the run-state",
+                ProxmoxOrphanCleanup.DeadReason.CHANNEL_OFFLINE, dead.get(0).reason());
+    }
+
+    @Test
+    public void findDeadNodes_retainsRunningVmWhoseChannelBlippedWithinGrace() throws Exception {
+        ProxmoxAgent agent = newAgent("blip", "pve1", 300);
+        Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
+        long now = agent.getCreatedAt() + 600_000L;
+        long offlineSince = now - 10_000L;                   // offline only 10s
+        Map<ProxmoxAgent, Long> offline = Map.of(agent, offlineSince);
+
+        assertTrue("a brief blip must not reap a running agent",
+                ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status, offline, now, 60_000L).isEmpty());
+    }
+
+    @Test
+    public void findDeadNodes_retainsRunningVmThatIsOnline() throws Exception {
+        ProxmoxAgent agent = newAgent("online", "pve1", 300);
+        Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
+        // -1 mirrors ProxmoxAgent.getOfflineSince() for an online/connecting computer.
+        Map<ProxmoxAgent, Long> offline = Map.of(agent, -1L);
+        assertTrue(ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
+                offline, farFuture(), NO_GRACE).isEmpty());
     }
 
     // --- end-to-end via cleanupCloud (JenkinsRule + WireMock) ---
@@ -188,6 +232,9 @@ public class ProxmoxOrphanCleanupTest {
                 .willReturn(okJson("{\"data\":[" +
                         "{\"vmid\":303,\"name\":\"agent-stopped\",\"status\":\"stopped\",\"template\":0}" +
                         "]}")));
+        // Ownership is verified before destroy: the VM still carries our marker, so destroy proceeds.
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/303/config"))
+                .willReturn(okJson("{\"data\":{\"description\":\"jenkins-managed;cloud:test-cloud\"}}")));
         stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/303/status/stop"))
                 .willReturn(okJson("{\"data\":\"UPID:pve1:stop\"}")));
         stubFor(delete(urlPathEqualTo("/api2/json/nodes/pve1/qemu/303"))
@@ -268,6 +315,35 @@ public class ProxmoxOrphanCleanupTest {
         new ProxmoxOrphanCleanup().cleanupCloud(cloud, j.jenkins);
 
         verify(deleteRequestedFor(urlPathEqualTo("/api2/json/nodes/pve1/qemu/411")));
+    }
+
+    @Test
+    public void cleanup_removesStaleNodeButSpareesReusedVm() throws Exception {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        // A stale node points at VM 305, but that id has since been re-cloned for something else
+        // (a foreign / manually-created VM). The dead node must be removed, but the VM that no longer
+        // carries our marker must NOT be destroyed (issue #17: stale terminate hitting a reused id).
+        ProxmoxAgent stale = newAgent("agent-stale", "pve1", 305);
+        backdateCreatedAt(stale, 3_600_000L);
+        j.jenkins.addNode(stale);
+
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
+                .willReturn(okJson("{\"data\":[" +
+                        "{\"vmid\":305,\"name\":\"someone-else\",\"status\":\"stopped\",\"template\":0}" +
+                        "]}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/305/config"))
+                .willReturn(okJson("{\"data\":{\"description\":\"not ours\"}}")));
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/305/status/stop"))
+                .willReturn(okJson("{\"data\":\"UPID:pve1:stop\"}")));
+        stubFor(delete(urlPathEqualTo("/api2/json/nodes/pve1/qemu/305"))
+                .willReturn(okJson("{\"data\":\"UPID:pve1:destroy\"}")));
+        stubFor(get(urlPathMatching("/api2/json/nodes/pve1/tasks/.*"))
+                .willReturn(okJson("{\"data\":{\"status\":\"stopped\",\"exitstatus\":\"OK\"}}")));
+
+        new ProxmoxOrphanCleanup().cleanupCloud(cloud, j.jenkins);
+
+        verify(0, deleteRequestedFor(urlPathEqualTo("/api2/json/nodes/pve1/qemu/305")));
+        assertNull("the stale Jenkins node must still be removed", j.jenkins.getNode("agent-stale"));
     }
 
     private static long farFuture() {

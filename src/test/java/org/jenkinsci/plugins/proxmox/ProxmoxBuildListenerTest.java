@@ -8,7 +8,9 @@ import org.junit.Test;
 import org.jvnet.hudson.test.JenkinsRule;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Tests the use-counting that drives "Builds Run" and {@code maxTotalUses}. The listener counts at the
@@ -46,5 +48,19 @@ public class ProxmoxBuildListenerTest {
         ProxmoxBuildListener.countUse(builtIn);
         ProxmoxBuildListener.countUse(null);
         // Success == no ClassCastException / NPE thrown.
+    }
+
+    @Test
+    public void shouldReapNowOnlyWhenCappedAndOtherwiseIdle() {
+        // Unlimited reuse (maxTotalUses <= 0) never reaps.
+        assertFalse(ProxmoxBuildListener.shouldReapNow(0, 5, false));
+        // Under the cap: keep the agent for more builds.
+        assertFalse(ProxmoxBuildListener.shouldReapNow(2, 1, false));
+        // At the cap but another executor still busy: let it drain, do not reap yet.
+        assertFalse(ProxmoxBuildListener.shouldReapNow(2, 2, true));
+        // At the cap and otherwise idle: reap immediately.
+        assertTrue(ProxmoxBuildListener.shouldReapNow(2, 2, false));
+        // Over the cap and idle (e.g. multi-executor overshoot): also reap.
+        assertTrue(ProxmoxBuildListener.shouldReapNow(2, 3, false));
     }
 }

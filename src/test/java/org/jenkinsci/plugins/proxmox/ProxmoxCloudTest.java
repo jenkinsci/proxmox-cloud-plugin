@@ -1,21 +1,50 @@
 package org.jenkinsci.plugins.proxmox;
 
+import com.cloudbees.plugins.credentials.CredentialsScope;
+import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.client.WireMock;
+import hudson.model.Computer;
 import hudson.model.Label;
 import hudson.model.Node;
 import hudson.slaves.Cloud;
+import hudson.slaves.OfflineCause;
+import hudson.util.Secret;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
+import org.jenkinsci.plugins.proxmox.config.JavaInstallation;
+import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.JenkinsRule;
 
+import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.List;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.*;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.junit.Assert.*;
 
 public class ProxmoxCloudTest {
 
     @Rule
     public JenkinsRule j = new JenkinsRule();
+
+    private WireMockServer wireMock;
+
+    @Before
+    public void setUp() {
+        wireMock = new WireMockServer(wireMockConfig().dynamicPort());
+        wireMock.start();
+        WireMock.configureFor("localhost", wireMock.port());
+    }
+
+    @After
+    public void tearDown() {
+        wireMock.stop();
+    }
 
     @Test
     public void testCanProvisionMatchingLabel() {
@@ -90,6 +119,77 @@ public class ProxmoxCloudTest {
     @Test(expected = IllegalArgumentException.class)
     public void testOrphanCleanupGracePeriodRejectsBelowOne() {
         new ProxmoxCloud("test-cloud").setOrphanCleanupGracePeriodSeconds(0);
+    }
+
+    // --- concurrent, race-safe id reservation (issue #17) ---
+
+    @Test
+    public void reserveVmIdReturnsDistinctIdsAndReleasesForReuse() throws Exception {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        cloud.setStartVmId(300);
+        // Proxmox keeps returning 300 (the stub never "creates" a VM); the reserved set is what forces
+        // concurrent callers onto distinct ids.
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid")).willReturn(okJson("{\"data\":\"300\"}")));
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid?vmid=301")).willReturn(okJson("{\"data\":\"301\"}")));
+
+        int first = cloud.reserveVmId();
+        int second = cloud.reserveVmId();
+        assertEquals(300, first);
+        assertEquals("a second in-flight reservation must skip the already-reserved id", 301, second);
+
+        // Once the first id is released, it is free to be chosen again.
+        cloud.releaseVmId(first);
+        assertEquals(300, cloud.reserveVmId());
+    }
+
+    // --- cap accounting excludes offline-dead nodes (issues #16, #17) ---
+
+    @Test
+    public void getRunningAgentCountExcludesOfflineDeadAgents() throws Exception {
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        cloud.setOrphanCleanupGracePeriodSeconds(1); // 1s grace
+
+        ProxmoxAgent agent = newAgent("agent-dead", 320);
+        j.jenkins.addNode(agent);
+        Computer c = agent.toComputer();
+        assertNotNull(c);
+
+        // Let the (failing) initial launch settle, then pin a known, backdatable offline cause.
+        for (int i = 0; i < 200 && (c.isConnecting() || c.isOnline()); i++) {
+            Thread.sleep(25);
+        }
+        OfflineCause.ChannelTermination cause = new OfflineCause.ChannelTermination(new IOException("blip"));
+        c.disconnect(cause).get();
+
+        // Just-disconnected (within the 1s grace) -> still counts as functional capacity.
+        setOfflineCauseTimestamp(cause, System.currentTimeMillis());
+        assertEquals("a briefly-offline agent still counts toward the cap", 1, cloud.getRunningAgentCount());
+
+        // Offline well beyond grace -> excluded so it cannot block a working replacement.
+        setOfflineCauseTimestamp(cause, System.currentTimeMillis() - 3_600_000L);
+        assertEquals("a long-dead offline agent must not hold a cap slot", 0, cloud.getRunningAgentCount());
+    }
+
+    private static void setOfflineCauseTimestamp(OfflineCause cause, long timestampMs) throws Exception {
+        Field f = OfflineCause.class.getDeclaredField("timestamp");
+        f.setAccessible(true);
+        f.setLong(cause, timestampMs);
+    }
+
+    private ProxmoxAgent newAgent(String name, int vmId) throws Exception {
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaInstallation.NONE);
+        return new ProxmoxAgent(name, "/home/jenkins", 1, Node.Mode.NORMAL, "linux",
+                launcher, "test-cloud", "test-template", "pve1", vmId, 10, 0);
+    }
+
+    private ProxmoxCloud cloudPointingAtWireMock() {
+        SystemCredentialsProvider.getInstance().getCredentials().add(
+                new ProxmoxTokenCredentialsImpl(CredentialsScope.GLOBAL, "proxmox-cred", "desc",
+                        "user@pve!token", Secret.fromString("secret")));
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        cloud.setApiUrl("http://localhost:" + wireMock.port());
+        cloud.setCredentialsId("proxmox-cred");
+        return cloud;
     }
 
     private ProxmoxCloud createTestCloud() {

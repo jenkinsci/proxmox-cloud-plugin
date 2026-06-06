@@ -131,6 +131,24 @@ public class ProxmoxAgentTest {
     }
 
     @Test
+    public void isOfflineDeadAppliesGraceWindow() {
+        long now = 10_000_000L;
+        long grace = 60_000L; // 60s
+        assertFalse("online/connecting (-1) is never dead", ProxmoxAgent.isOfflineDead(-1L, now, grace));
+        assertFalse("offline within grace is not dead", ProxmoxAgent.isOfflineDead(now - 30_000L, now, grace));
+        assertTrue("offline beyond grace is dead", ProxmoxAgent.isOfflineDead(now - 120_000L, now, grace));
+        assertTrue("boundary (exactly grace) counts as dead", ProxmoxAgent.isOfflineDead(now - grace, now, grace));
+    }
+
+    @Test
+    public void getOfflineSinceFallsBackToCreatedAtWithoutComputer() throws Exception {
+        // A node not registered with Jenkins has no computer; getOfflineSince treats it as offline
+        // since creation (the phantom case), so it does not artificially count toward the cap.
+        ProxmoxAgent agent = newAgent("agent-nocomputer", 315);
+        assertEquals(agent.getCreatedAt(), agent.getOfflineSince());
+    }
+
+    @Test
     public void reconfigureRejectsNegativeLifecycleValues() throws Exception {
         ProxmoxAgent agent = newAgent("agent-neg", 314, 30, 0);
 

@@ -32,7 +32,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -63,6 +65,7 @@ public class ProxmoxCloud extends Cloud {
 
     private transient volatile ProxmoxClient client;
     private transient volatile Object provisionLock;
+    private transient volatile Set<Integer> reservedVmIds;
 
     private static final DateTimeFormatter SYNC_TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -96,6 +99,52 @@ public class ProxmoxCloud extends Cloud {
         return lock;
     }
 
+    private Set<Integer> getReservedVmIds() {
+        Set<Integer> reserved = reservedVmIds;
+        if (reserved == null) {
+            synchronized (this) {
+                reserved = reservedVmIds;
+                if (reserved == null) {
+                    reserved = new HashSet<>();
+                    reservedVmIds = reserved;
+                }
+            }
+        }
+        return reserved;
+    }
+
+    /**
+     * Atomically reserve a free VM id for an imminent clone. {@link #getProvisionLock()} is held only
+     * for the (fast) id lookup, not the clone/start, so concurrent provisions pick distinct ids yet
+     * run their clones in parallel and the cloud fills its cap in roughly one provision time. The
+     * reserved set also covers ids that are about to be cloned but whose VM does not exist yet, which
+     * Proxmox's {@code nextid} cannot see. Always pair with {@link #releaseVmId(int)} in a finally.
+     */
+    int reserveVmId() {
+        ProxmoxClient apiClient = getClient();
+        synchronized (getProvisionLock()) {
+            Set<Integer> reserved = getReservedVmIds();
+            int floor = startVmId;
+            for (int attempt = 0; attempt < 1000; attempt++) {
+                int id = apiClient.getNextVmId(floor);
+                if (reserved.add(id)) {
+                    return id;
+                }
+                floor = id + 1; // already reserved in-flight; search above it
+            }
+            throw new ProxmoxException("Could not reserve a free VM id starting at " + startVmId);
+        }
+    }
+
+    void releaseVmId(int vmId) {
+        Set<Integer> reserved = reservedVmIds;
+        if (reserved != null) {
+            synchronized (getProvisionLock()) {
+                reserved.remove(vmId);
+            }
+        }
+    }
+
     @Override
     public Collection<NodeProvisioner.PlannedNode> provision(CloudState state, int excessWorkload) {
         Label label = state.getLabel();
@@ -117,10 +166,15 @@ public class ProxmoxCloud extends Cloud {
             int toProvision = Math.min(excessWorkload, available);
             for (int i = 0; i < toProvision; i++) {
                 String displayName = template.getName() + " (pending)";
+                ProxmoxTemplate t = template;
+                // Each clone reserves its own id under a short lock, then clones/starts outside it, so
+                // multiple agents come up concurrently up to the cap rather than strictly serially.
                 Future<Node> future = Computer.threadPoolForRemoting.submit(() -> {
-                    synchronized (getProvisionLock()) {
-                        var listener = hudson.model.TaskListener.NULL;
-                        return template.provision(this, listener);
+                    int vmId = reserveVmId();
+                    try {
+                        return t.provision(this, hudson.model.TaskListener.NULL, vmId);
+                    } finally {
+                        releaseVmId(vmId);
                     }
                 });
                 planned.add(new NodeProvisioner.PlannedNode(displayName, future, template.getNumExecutors()));
@@ -148,10 +202,18 @@ public class ProxmoxCloud extends Cloud {
         return false;
     }
 
+    /**
+     * Functional agents for this cloud, used for instance-cap accounting. Offline-dead nodes (an
+     * extended-offline channel, or a phantom whose VM is gone) are excluded so they cannot hold cap
+     * slots and block working replacements while the orphan reconcile catches up (issues #16, #17).
+     */
     public int getRunningAgentCount() {
+        long now = System.currentTimeMillis();
+        long graceMs = (long) orphanCleanupGracePeriodSeconds * 1000;
         int count = 0;
         for (Node node : Jenkins.get().getNodes()) {
-            if (node instanceof ProxmoxAgent agent && name.equals(agent.getCloudName())) {
+            if (node instanceof ProxmoxAgent agent && name.equals(agent.getCloudName())
+                    && !agent.isOfflineDead(now, graceMs)) {
                 count++;
             }
         }
@@ -178,8 +240,11 @@ public class ProxmoxCloud extends Cloud {
 
         try {
             ProxmoxAgent agent;
-            synchronized (getProvisionLock()) {
-                agent = t.provision(this, hudson.model.TaskListener.NULL);
+            int vmId = reserveVmId();
+            try {
+                agent = t.provision(this, hudson.model.TaskListener.NULL, vmId);
+            } finally {
+                releaseVmId(vmId);
             }
             jenkins.addNode(agent);
             return new HttpRedirect("/computer/" + agent.getNodeName());

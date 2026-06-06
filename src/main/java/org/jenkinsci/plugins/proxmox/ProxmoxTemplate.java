@@ -95,11 +95,15 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         return label.matches(getLabelSet());
     }
 
-    public ProxmoxAgent provision(ProxmoxCloud cloud, TaskListener listener) throws Exception {
+    /**
+     * Clone, configure, and start a VM for the given pre-reserved id, returning the agent. The id is
+     * reserved by {@link ProxmoxCloud#reserveVmId()} under a short lock so concurrent provisions get
+     * distinct ids; the clone/start here runs outside that lock so agents come up in parallel.
+     */
+    public ProxmoxAgent provision(ProxmoxCloud cloud, TaskListener listener, int newVmId) throws Exception {
         var log = listener.getLogger();
         ProxmoxClient client = cloud.getClient();
 
-        int newVmId = client.getNextVmId(cloud.getStartVmId());
         String vmName = namePrefix + newVmId;
         log.println("[Proxmox] Cloning template " + templateVmId + " → VM " + newVmId + " (" + vmName + ")");
 
@@ -210,13 +214,21 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         return slash >= 0 ? ipCidr.substring(0, slash) : ipCidr;
     }
 
+    /**
+     * Functional agents from this template, for per-template instance-cap accounting. Offline-dead
+     * nodes are excluded (mirrors {@link ProxmoxCloud#getRunningAgentCount()}) so a dead node cannot
+     * hold a cap slot and block a working replacement (issues #16, #17).
+     */
     public int getNumActiveAgents(ProxmoxCloud cloud) {
         Jenkins jenkins = Jenkins.get();
+        long now = System.currentTimeMillis();
+        long graceMs = (long) cloud.getOrphanCleanupGracePeriodSeconds() * 1000;
         int count = 0;
         for (var node : jenkins.getNodes()) {
             if (node instanceof ProxmoxAgent agent
                     && cloud.name.equals(agent.getCloudName())
-                    && name.equals(agent.getTemplateName())) {
+                    && name.equals(agent.getTemplateName())
+                    && !agent.isOfflineDead(now, graceMs)) {
                 count++;
             }
         }

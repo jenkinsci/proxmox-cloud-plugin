@@ -62,13 +62,16 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
         String marker = "jenkins-managed;cloud:" + cloud.name;
         long graceMs = (long) cloud.getOrphanCleanupGracePeriodSeconds() * 1000;
 
-        // Agents Jenkins currently knows about for this cloud.
+        // Agents Jenkins currently knows about for this cloud, and when each went offline (captured
+        // once here so the pure findDeadNodes decision stays testable).
         List<ProxmoxAgent> agents = new ArrayList<>();
         Set<Integer> knownVmIds = new HashSet<>();
+        Map<ProxmoxAgent, Long> offlineSinceByAgent = new HashMap<>();
         for (var node : jenkins.getNodes()) {
             if (node instanceof ProxmoxAgent agent && cloud.name.equals(agent.getCloudName())) {
                 agents.add(agent);
                 knownVmIds.add(agent.getVmId());
+                offlineSinceByAgent.put(agent, agent.getOfflineSince());
             }
         }
 
@@ -130,7 +133,8 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
         // EC2SlaveMonitor; removing EphemeralNode means stale agents would otherwise persist forever.
         // Unlike EC2 (which keeps stopped instances for its stop/start reuse feature), this plugin
         // never reuses VMs, so a stopped agent VM is also dead and is destroyed before node removal.
-        for (DeadAgent da : findDeadNodes(agents, vmStatusByNode, System.currentTimeMillis(), graceMs)) {
+        for (DeadAgent da : findDeadNodes(agents, vmStatusByNode, offlineSinceByAgent,
+                System.currentTimeMillis(), graceMs)) {
             ProxmoxAgent agent = da.agent();
             Computer computer = agent.toComputer();
             if (computer != null && computer.isOnline()) {
@@ -141,12 +145,17 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
                 continue;
             }
             if (da.vmExists()) {
-                LOGGER.fine("Destroying not-running VM " + agent.getVmId() + " on " + agent.getProxmoxNode()
-                        + " backing agent " + agent.getNodeName());
+                LOGGER.fine("Destroying VM " + agent.getVmId() + " on " + agent.getProxmoxNode()
+                        + " backing dead agent " + agent.getNodeName() + " (" + da.reason() + ")");
                 destroyVm(client, cloud, agent.getProxmoxNode(), agent.getVmId());
             }
-            LOGGER.info("Removing Proxmox agent " + agent.getNodeName() + " - backing VM " + agent.getVmId()
-                    + (da.vmExists() ? " was not running" : " no longer exists") + " on " + agent.getProxmoxNode());
+            String detail = switch (da.reason()) {
+                case VM_GONE -> "backing VM no longer exists";
+                case VM_STOPPED -> "backing VM was not running, destroyed it";
+                case CHANNEL_OFFLINE -> "agent channel offline beyond grace, destroyed its still-running VM";
+            };
+            LOGGER.info("Removing Proxmox agent " + agent.getNodeName() + " (VM " + agent.getVmId()
+                    + " on " + agent.getProxmoxNode() + "): " + detail);
             try {
                 jenkins.removeNode(agent);
             } catch (IOException e) {
@@ -155,19 +164,35 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
         }
     }
 
-    /** An agent whose backing VM is gone ({@code vmExists=false}) or present but not running. */
-    record DeadAgent(ProxmoxAgent agent, boolean vmExists) {}
+    /** Why an agent is considered dead, for accurate teardown logging. */
+    enum DeadReason {
+        /** The backing VM is gone from Proxmox (node-only removal). */
+        VM_GONE,
+        /** The backing VM is present but not running (destroy then remove). */
+        VM_STOPPED,
+        /** The VM is still running but the agent's channel has been offline beyond grace (issue #16). */
+        CHANNEL_OFFLINE
+    }
+
+    /** A dead agent: {@code vmExists} is false only for {@link DeadReason#VM_GONE}. */
+    record DeadAgent(ProxmoxAgent agent, boolean vmExists, DeadReason reason) {}
 
     /**
-     * Pure decision: which agents back onto a VM that is gone or not running, and are past the
-     * removal grace period. The grace window (using the persisted {@code createdAt}) avoids racing
-     * a VM that is briefly stopped while a freshly-provisioned agent boots.
+     * Pure decision: which agents are dead and should be torn down. An agent is dead when, past the
+     * removal grace period (using the persisted {@code createdAt} to avoid racing a freshly-booting
+     * agent), either its backing VM is gone or not running, OR the VM is still running but the agent's
+     * channel has been offline beyond the grace window (issue #16: a transient blip or interrupted
+     * launch can strand an offline agent over a still-running VM, which the run-state alone treats as
+     * healthy). An online or briefly-offline agent over a running VM is left alone.
      *
-     * @param vmStatusByNode live VM status keyed by Proxmox node then VM id; only nodes listed
-     *                       successfully are present, so an agent whose node is absent is left alone
+     * @param vmStatusByNode      live VM status keyed by Proxmox node then VM id; only nodes listed
+     *                            successfully are present, so an agent whose node is absent is left alone
+     * @param offlineSinceByAgent when each agent's channel went offline (epoch ms), or {@code -1}/absent
+     *                            if online or still connecting (see {@link ProxmoxAgent#getOfflineSince()})
      */
     static List<DeadAgent> findDeadNodes(List<ProxmoxAgent> agents,
                                          Map<String, Map<Integer, String>> vmStatusByNode,
+                                         Map<ProxmoxAgent, Long> offlineSinceByAgent,
                                          long nowMs, long minAgeMs) {
         List<DeadAgent> dead = new ArrayList<>();
         for (ProxmoxAgent agent : agents) {
@@ -176,15 +201,28 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
             if (nowMs - agent.getCreatedAt() < minAgeMs) continue;  // within grace period → don't act
             String status = nodeVms.get(agent.getVmId());
             if (status == null) {
-                dead.add(new DeadAgent(agent, false));              // VM gone
+                dead.add(new DeadAgent(agent, false, DeadReason.VM_GONE));
             } else if (!"running".equals(status)) {
-                dead.add(new DeadAgent(agent, true));               // VM present but not running
+                dead.add(new DeadAgent(agent, true, DeadReason.VM_STOPPED));
+            } else {
+                // VM running: dead only if the channel has been offline beyond the grace window.
+                Long offlineSince = offlineSinceByAgent.get(agent);
+                if (offlineSince != null && ProxmoxAgent.isOfflineDead(offlineSince, nowMs, minAgeMs)) {
+                    dead.add(new DeadAgent(agent, true, DeadReason.CHANNEL_OFFLINE));  // offline zombie
+                }
             }
         }
         return dead;
     }
 
     private void destroyVm(ProxmoxClient client, ProxmoxCloud cloud, String nodeName, int vmId) {
+        // Ids are reused, so verify the VM still carries our marker before destroying it: a stale
+        // call must not kill a VM whose id was re-cloned by a newer agent or created manually.
+        if (!ProxmoxVms.confirmOwnedByCloud(client, nodeName, vmId, cloud.name)) {
+            LOGGER.fine("VM " + vmId + " on " + nodeName + " is gone or no longer managed by cloud "
+                    + cloud.name + "; skipping destroy");
+            return;
+        }
         try {
             try {
                 String upid = client.stopVm(nodeName, vmId);
@@ -195,6 +233,10 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
             String upid = client.destroyVm(nodeName, vmId, true);
             client.waitForTask(nodeName, upid, cloud.getOperationTimeout());
         } catch (ProxmoxException e) {
+            if (ProxmoxVms.isAlreadyGone(e)) {
+                LOGGER.fine("VM " + vmId + " on " + nodeName + " vanished during destroy; treating as done");
+                return;
+            }
             LOGGER.log(Level.WARNING, "Failed to destroy VM " + vmId + " on " + nodeName, e);
         }
     }

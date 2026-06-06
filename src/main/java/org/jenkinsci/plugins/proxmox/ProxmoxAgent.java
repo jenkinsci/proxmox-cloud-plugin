@@ -1,6 +1,8 @@
 package org.jenkinsci.plugins.proxmox;
 
+import com.google.gson.JsonObject;
 import hudson.Extension;
+import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Node;
 import hudson.model.TaskListener;
@@ -15,6 +17,7 @@ import net.sf.json.JSONObject;
 import org.kohsuke.stapler.StaplerRequest2;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
+import org.jenkinsci.plugins.proxmox.api.ProxmoxResourceNotFoundException;
 
 import java.io.IOException;
 import java.util.logging.Level;
@@ -75,6 +78,28 @@ public class ProxmoxAgent extends AbstractCloudSlave {
         }
 
         ProxmoxClient client = cloud.getClient();
+
+        // VM ids are reused (Proxmox reissues the lowest free id), so never destroy by id alone.
+        // Confirm the VM is still ours first: a duplicate or stale terminate that finds the VM gone
+        // has nothing to do, and one that finds a VM we no longer own (id reused by a newer agent or
+        // a manual VM) must leave it untouched. The node is still removed by
+        // AbstractCloudSlave.terminate()'s finally either way.
+        JsonObject config;
+        try {
+            config = client.getVmConfig(proxmoxNode, vmId);
+        } catch (ProxmoxResourceNotFoundException e) {
+            LOGGER.fine("VM " + vmId + " on " + proxmoxNode + " already gone; nothing to terminate");
+            return;
+        } catch (ProxmoxException e) {
+            LOGGER.log(Level.WARNING, "Failed to read config for VM " + vmId + " on " + proxmoxNode, e);
+            throw new IOException("Failed to read config for VM " + vmId, e);
+        }
+        if (!ProxmoxVms.isManagedByCloud(config, cloudName)) {
+            LOGGER.warning("VM " + vmId + " on " + proxmoxNode + " is not managed by cloud " + cloudName
+                    + " (id reused?); skipping destroy");
+            return;
+        }
+
         try {
             try {
                 String upid = client.shutdownVm(proxmoxNode, vmId, 30);
@@ -89,6 +114,11 @@ public class ProxmoxAgent extends AbstractCloudSlave {
             client.waitForTask(proxmoxNode, upid, cloud.getOperationTimeout());
             LOGGER.fine("VM " + vmId + " destroyed on " + proxmoxNode);
         } catch (ProxmoxException e) {
+            if (ProxmoxVms.isAlreadyGone(e)) {
+                LOGGER.fine("VM " + vmId + " on " + proxmoxNode
+                        + " vanished during terminate; treating as destroyed");
+                return;
+            }
             LOGGER.log(Level.WARNING, "Failed to terminate VM " + vmId, e);
             throw new IOException("Failed to terminate VM " + vmId, e);
         }
@@ -176,6 +206,42 @@ public class ProxmoxAgent extends AbstractCloudSlave {
 
     public long getCreatedAt() {
         return createdAt;
+    }
+
+    /**
+     * When this agent's computer went offline, in epoch millis, or {@code -1} if it is online or
+     * still connecting (i.e. functional or mid-launch). A node with no computer yet (a phantom whose
+     * VM is gone, or one removed mid-provision) is treated as offline since it was created.
+     *
+     * <p>Drives both the offline-with-running-VM reconcile (issue #16) and keeping dead nodes from
+     * holding instance-cap slots (issue #17): a brief blip is tolerated, an extended outage is not.
+     * The disconnect timestamp comes from the {@code OfflineCause}; when unavailable (e.g. never
+     * connected) it falls back to {@link #getCreatedAt()}.
+     */
+    public long getOfflineSince() {
+        Computer c = toComputer();
+        if (c == null) {
+            return createdAt;
+        }
+        if (c.isOnline() || c.isConnecting()) {
+            return -1;
+        }
+        var cause = c.getOfflineCause();
+        long ts = cause != null ? cause.getTimestamp() : 0;
+        return ts > 0 ? ts : createdAt;
+    }
+
+    /**
+     * Pure deadness test: offline (a non-negative offline-since) and offline for at least the grace
+     * window. Package-private for unit testing.
+     */
+    static boolean isOfflineDead(long offlineSinceMs, long nowMs, long graceMs) {
+        return offlineSinceMs >= 0 && (nowMs - offlineSinceMs) >= graceMs;
+    }
+
+    /** Whether this agent's computer has been offline beyond the given grace window. */
+    public boolean isOfflineDead(long nowMs, long graceMs) {
+        return isOfflineDead(getOfflineSince(), nowMs, graceMs);
     }
 
     public synchronized int getTotalUses() {
