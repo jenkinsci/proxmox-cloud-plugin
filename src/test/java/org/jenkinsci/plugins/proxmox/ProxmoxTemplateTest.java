@@ -2,6 +2,7 @@ package org.jenkinsci.plugins.proxmox;
 
 import hudson.model.Label;
 import hudson.model.Node;
+import hudson.util.FormValidation;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.junit.Rule;
 import org.junit.Test;
@@ -57,7 +58,31 @@ public class ProxmoxTemplateTest {
         assertEquals(30, template.getIdleTerminationMinutes());
         assertEquals(60, template.getStartupWaitSeconds());
         assertEquals(0, template.getInstanceCap());
+        assertEquals(0, template.getInstanceMin());
         assertEquals(0, template.getMaxTotalUses());
+    }
+
+    @Test
+    public void instanceMinSetterAccepts() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
+        template.setInstanceMin(2);
+        assertEquals(2, template.getInstanceMin());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void instanceMinSetterRejectsNegative() {
+        new ProxmoxTemplate("test", "pve1", 100, "linux", 1).setInstanceMin(-1);
+    }
+
+    @Test
+    public void doCheckInstanceMinValidatesRangeAndCap() {
+        ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
+        assertEquals(FormValidation.Kind.OK, d.doCheckInstanceMin(0, 0).kind);   // none
+        assertEquals(FormValidation.Kind.OK, d.doCheckInstanceMin(3, 0).kind);   // cap 0 = unlimited
+        assertEquals(FormValidation.Kind.OK, d.doCheckInstanceMin(2, 5).kind);   // within cap
+        assertEquals(FormValidation.Kind.OK, d.doCheckInstanceMin(5, 5).kind);   // at cap
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckInstanceMin(-1, 0).kind); // negative
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckInstanceMin(6, 5).kind);  // exceeds cap
     }
 
     @Test

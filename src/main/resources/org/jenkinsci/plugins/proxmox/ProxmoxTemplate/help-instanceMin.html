@@ -1,0 +1,13 @@
+<div>
+    Minimum number of warm-pool VMs to keep running from this template at all times, so builds start
+    without waiting for a clone and boot. 0 = no warm pool (provision strictly on demand).
+
+    <p>
+        The cloud provisions up to this many instances even with no queued work (at startup, on config
+        save, and after any drop), bounded by the <b>Instance Cap</b> (the minimum cannot exceed the
+        cap). Idle agents above the minimum are still reaped by idle termination, but the minimum
+        itself is never idle-reaped. <b>Max Total Uses</b> still applies: a used-up warm agent is
+        recycled and a replacement is provisioned to restore the count, so warm agents do not run
+        forever.
+    </p>
+</div>

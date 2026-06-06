@@ -95,6 +95,30 @@ public class ProxmoxRetentionStrategyTest {
         assertTrue(ProxmoxRetentionStrategy.shouldTerminateForMaxUses(2, 3, true));
     }
 
+    // --- retainsMinimum: the warm-pool idle-termination gate (issue #20) ---
+
+    @Test
+    public void retainsMinimumFalseWhenNoMinimumConfigured() {
+        assertFalse(ProxmoxRetentionStrategy.retainsMinimum(1, 0));
+    }
+
+    @Test
+    public void retainsMinimumTrueAtOrBelowMinimum() {
+        assertTrue("below the minimum is retained", ProxmoxRetentionStrategy.retainsMinimum(1, 2));
+        assertTrue("exactly at the minimum is retained", ProxmoxRetentionStrategy.retainsMinimum(2, 2));
+    }
+
+    @Test
+    public void retainsMinimumFalseAboveMinimum() {
+        // Surplus above the minimum is reaped normally.
+        assertFalse(ProxmoxRetentionStrategy.retainsMinimum(3, 2));
+    }
+
+    @Test
+    public void retainsMinimumFalseWithNoActiveAgents() {
+        assertFalse(ProxmoxRetentionStrategy.retainsMinimum(0, 2));
+    }
+
     // --- isAcceptingTasks: real ProxmoxComputer wiring ---
 
     @Test

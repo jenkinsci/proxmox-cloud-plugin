@@ -44,6 +44,9 @@ public class ProxmoxRetentionStrategy extends RetentionStrategy<ProxmoxComputer>
             LOGGER.fine("Agent " + c.getName() + " reached max uses (" + agent.getMaxTotalUses()
                     + ") and is idle, terminating");
             terminate(agent);
+            // A used-up warm-pool agent has just been recycled; restore the minimum promptly rather
+            // than waiting for the next periodic top-up (mirrors EC2's taskAccepted maxTotalUses path).
+            ProxmoxMinimumInstances.scheduleCheck();
             return 1;
         }
 
@@ -52,8 +55,14 @@ public class ProxmoxRetentionStrategy extends RetentionStrategy<ProxmoxComputer>
             long idleMs = System.currentTimeMillis() - c.getIdleStartMilliseconds();
             long thresholdMs = (long) idleTerminationMinutes * 60 * 1000;
             if (idleMs > thresholdMs) {
-                LOGGER.fine("Agent " + c.getName() + " idle for " + (idleMs / 60000) + " minutes, terminating");
-                terminate(agent);
+                if (keepsWarmPoolMinimum(agent)) {
+                    LOGGER.fine("Agent " + c.getName()
+                            + " idle past threshold but retained for the template warm-pool minimum");
+                } else {
+                    LOGGER.fine("Agent " + c.getName() + " idle for " + (idleMs / 60000)
+                            + " minutes, terminating");
+                    terminate(agent);
+                }
             }
         }
 
@@ -95,5 +104,32 @@ public class ProxmoxRetentionStrategy extends RetentionStrategy<ProxmoxComputer>
      */
     static boolean shouldTerminateForMaxUses(int maxTotalUses, int totalUses, boolean idle) {
         return maxTotalUses > 0 && totalUses >= maxTotalUses && idle;
+    }
+
+    /**
+     * Whether this idle agent must be kept to preserve its template's warm-pool minimum. Resolved live
+     * from the agent's cloud and template; if either is gone, the agent is not retained (reaped as
+     * before). Uses {@link ProxmoxTemplate#getNumActiveAgents}, which excludes offline-dead nodes, so a
+     * zombie cannot count toward the minimum.
+     */
+    private boolean keepsWarmPoolMinimum(ProxmoxAgent agent) {
+        ProxmoxCloud cloud = agent.getCloud();
+        if (cloud == null) {
+            return false;
+        }
+        ProxmoxTemplate template = cloud.getTemplateByName(agent.getTemplateName());
+        if (template == null) {
+            return false;
+        }
+        return retainsMinimum(template.getNumActiveAgents(cloud), template.getInstanceMin());
+    }
+
+    /**
+     * Whether an idle agent is retained to hold the warm-pool minimum: a minimum is set and the
+     * functional count is at or below it (so reaping this agent would drop below the minimum). Mirrors
+     * the EC2 plugin's EC2RetentionStrategy minimum gate. Package-private and pure for unit testing.
+     */
+    static boolean retainsMinimum(int activeAgents, int instanceMin) {
+        return activeAgents > 0 && activeAgents <= instanceMin;
     }
 }

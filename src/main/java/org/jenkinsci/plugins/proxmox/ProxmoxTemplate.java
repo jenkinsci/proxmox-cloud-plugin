@@ -66,6 +66,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     private JavaInstallation javaVersion = JavaInstallation.NONE;
     private int idleTerminationMinutes = 30;
     private int instanceCap;
+    private int instanceMin;
     private int maxTotalUses;
     private String namePrefix = "jenkins-agent-";
     private int startupWaitSeconds = 60;
@@ -267,6 +268,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public JavaInstallation getJavaVersion() { return javaVersion; }
     public int getIdleTerminationMinutes() { return idleTerminationMinutes; }
     public int getInstanceCap() { return instanceCap; }
+    public int getInstanceMin() { return instanceMin; }
     public int getMaxTotalUses() { return maxTotalUses; }
     public String getNamePrefix() { return namePrefix; }
     public int getStartupWaitSeconds() { return startupWaitSeconds; }
@@ -307,6 +309,10 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         if (v < 0) throw new IllegalArgumentException("Instance cap must be non-negative");
         this.instanceCap = v;
     }
+    @DataBoundSetter public void setInstanceMin(int v) {
+        if (v < 0) throw new IllegalArgumentException("Instance minimum must be non-negative");
+        this.instanceMin = v;
+    }
     @DataBoundSetter public void setMaxTotalUses(int v) {
         if (v < 0) throw new IllegalArgumentException("Max total uses must be non-negative");
         this.maxTotalUses = v;
@@ -341,13 +347,23 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         @Override
         public ProxmoxTemplate newInstance(org.kohsuke.stapler.StaplerRequest2 req,
                                            net.sf.json.JSONObject formData) throws FormException {
+            ProxmoxTemplate template;
             try {
-                return (ProxmoxTemplate) super.newInstance(req, formData);
+                template = (ProxmoxTemplate) super.newInstance(req, formData);
             } catch (LinkageError e) {
                 Throwable root = e;
                 while (root.getCause() != null) root = root.getCause();
                 throw new FormException(root.getMessage(), e, "");
             }
+            // Enforce the cross-field rule on save: doCheckInstanceMin only validates client-side, which
+            // does not block submission, so the warm-pool minimum could otherwise be saved above the cap.
+            if (template != null && template.getInstanceCap() > 0
+                    && template.getInstanceMin() > template.getInstanceCap()) {
+                throw new FormException("Instance minimum (" + template.getInstanceMin()
+                        + ") cannot exceed the instance cap (" + template.getInstanceCap() + ")",
+                        "instanceMin");
+            }
+            return template;
         }
 
         private ProxmoxClient tryCreateClient(String apiUrl, String credentialsId,
@@ -517,6 +533,16 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         public FormValidation doCheckTemplateVmId(@QueryParameter int value) {
             if (value <= 0) {
                 return FormValidation.error("Template VM ID must be positive");
+            }
+            return FormValidation.ok();
+        }
+
+        public FormValidation doCheckInstanceMin(@QueryParameter int value, @QueryParameter int instanceCap) {
+            if (value < 0) {
+                return FormValidation.error("Must be non-negative");
+            }
+            if (instanceCap > 0 && value > instanceCap) {
+                return FormValidation.error("Instance minimum cannot exceed the instance cap (" + instanceCap + ")");
             }
             return FormValidation.ok();
         }

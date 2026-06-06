@@ -119,6 +119,11 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
                 LOGGER.log(Level.WARNING, "Orphan cleanup failed for cloud " + proxmoxCloud.name, e);
             }
         }
+
+        // Warm-pool top-up runs every tick regardless of the per-cloud cleanup toggle (issue #20): it
+        // provisions rather than reconciles. Async, so provisioning never blocks the reconcile thread
+        // (the analog of the EC2 plugin's EC2SlaveMonitor.execute -> MinimumInstanceChecker.scheduleCheck).
+        ProxmoxMinimumInstances.scheduleCheck();
     }
 
     /** Whether a cloud is due for reconcile: never run before, or its period has elapsed. Pure for testing. */

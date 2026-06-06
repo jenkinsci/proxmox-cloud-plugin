@@ -72,6 +72,9 @@ public class ProxmoxBuildListener implements ExecutorListener {
         Computer.threadPoolForRemoting.submit(() -> {
             try {
                 agent.terminate();
+                // Recycled a used-up warm-pool agent; restore the template minimum promptly rather than
+                // waiting for the next periodic top-up (mirrors EC2's taskAccepted maxTotalUses path).
+                ProxmoxMinimumInstances.scheduleCheck();
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Failed to terminate agent " + agent.getNodeName(), e);
             }

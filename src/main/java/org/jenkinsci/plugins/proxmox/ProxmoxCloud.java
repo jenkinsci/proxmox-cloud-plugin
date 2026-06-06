@@ -189,6 +189,52 @@ public class ProxmoxCloud extends Cloud {
         return planned;
     }
 
+    /**
+     * Provision up to {@code count} warm-pool agents of {@code template}, registering each as a node.
+     * Mirrors {@link #provision}'s cap math and concurrent clone path but adds the nodes itself (it is
+     * not driven by the NodeProvisioner), bounded by the template and cloud instance caps. Awaits each
+     * clone before returning so the new agents are counted on the next minimum check, which avoids
+     * cross-tick over-provisioning; it is meant to run on {@link ProxmoxMinimumInstances}' single
+     * background thread, where blocking is fine. Returns the number of agents actually added.
+     */
+    int provisionForMinimum(ProxmoxTemplate template, int count) {
+        int currentCount = template.getNumActiveAgents(this);
+        int templateCap = template.getInstanceCap();
+        int available = (templateCap > 0) ? templateCap - currentCount : Integer.MAX_VALUE;
+        if (instanceCap > 0) {
+            available = Math.min(available, instanceCap - getRunningAgentCount());
+        }
+        int toProvision = Math.min(count, available);
+        if (toProvision <= 0) {
+            return 0;
+        }
+
+        List<Future<Node>> futures = new ArrayList<>();
+        for (int i = 0; i < toProvision; i++) {
+            futures.add(Computer.threadPoolForRemoting.submit(() -> {
+                int vmId = reserveVmId();
+                try {
+                    return template.provision(this, hudson.model.TaskListener.NULL, vmId);
+                } finally {
+                    releaseVmId(vmId);
+                }
+            }));
+        }
+
+        Jenkins jenkins = Jenkins.get();
+        int added = 0;
+        for (Future<Node> future : futures) {
+            try {
+                jenkins.addNode(future.get());
+                added++;
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Warm-pool provision failed for template "
+                        + template.getName() + " in cloud " + name, e);
+            }
+        }
+        return added;
+    }
+
     @Override
     public boolean canProvision(CloudState state) {
         Label label = state.getLabel();
@@ -361,6 +407,21 @@ public class ProxmoxCloud extends Cloud {
     @DataBoundSetter public void setLastConfigTimestamp(long v) { this.lastConfigTimestamp = v; }
     @DataBoundSetter public void setTemplates(List<ProxmoxTemplate> v) { this.templates = v != null ? v : new ArrayList<>(); }
 
+    /**
+     * Reject a template whose warm-pool minimum exceeds its instance cap (cap 0 = unlimited, so
+     * unbounded). Enforced on save because the client-side {@code doCheckInstanceMin} does not block
+     * submission. Package-private and pure for unit testing.
+     */
+    static void validateTemplateMinimums(List<ProxmoxTemplate> templates) throws Descriptor.FormException {
+        for (ProxmoxTemplate t : templates) {
+            if (t.getInstanceCap() > 0 && t.getInstanceMin() > t.getInstanceCap()) {
+                throw new Descriptor.FormException("Template '" + t.getName() + "': instance minimum ("
+                        + t.getInstanceMin() + ") cannot exceed the instance cap ("
+                        + t.getInstanceCap() + ")", "templates");
+            }
+        }
+    }
+
     @Extension
     @Symbol("proxmox")
     public static class DescriptorImpl extends Descriptor<Cloud> {
@@ -381,6 +442,11 @@ public class ProxmoxCloud extends Cloud {
                 throw new FormException(root.getMessage(), e, "");
             }
             if (cloud != null) {
+                // Enforce the warm-pool minimum <= cap rule on save. The per-template
+                // doCheckInstanceMin only validates client-side (which does not block submission), and
+                // nested template binding may bypass ProxmoxTemplate's own newInstance, so the cloud's
+                // newInstance (always invoked on save) is the reliable place to reject it.
+                validateTemplateMinimums(cloud.getTemplates());
                 cloud.setLastConfigTimestamp(System.currentTimeMillis());
             }
             return cloud;

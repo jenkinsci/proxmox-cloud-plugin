@@ -5,6 +5,7 @@ import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.client.WireMock;
 import hudson.model.Computer;
+import hudson.model.Descriptor;
 import hudson.model.Label;
 import hudson.model.Node;
 import hudson.slaves.Cloud;
@@ -186,6 +187,56 @@ public class ProxmoxCloudTest {
         // Offline well beyond grace -> excluded so it cannot block a working replacement.
         setOfflineCauseTimestamp(cause, System.currentTimeMillis() - 3_600_000L);
         assertEquals("a long-dead offline agent must not hold a cap slot", 0, cloud.getRunningAgentCount());
+    }
+
+    // --- warm-pool minimum provisioning (issue #20) ---
+
+    @Test
+    public void provisionForMinimumRespectsTemplateCapWithoutHittingApi() throws Exception {
+        ProxmoxTemplate template = new ProxmoxTemplate("test-template", "pve1", 9000, "linux", 1);
+        template.setInstanceCap(1);
+        template.setInstanceMin(3);
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        cloud.setApiUrl("http://localhost:" + wireMock.port()); // any API call here would be unstubbed
+        cloud.setTemplates(List.of(template));
+
+        // One active agent of this template already equals the cap, so there is no headroom.
+        j.jenkins.addNode(newAgent("agent-at-cap", 320));
+
+        assertEquals(0, cloud.provisionForMinimum(template, 3));
+        verify(0, anyRequestedFor(anyUrl())); // returned on the cap math, never reserved an id or cloned
+    }
+
+    @Test
+    public void minimumInstancesCheckNoOpsWhenNoMinimumConfigured() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test-template", "pve1", 9000, "linux", 1);
+        // instanceMin defaults to 0 -> nothing to provision, so the check must do no API work.
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        cloud.setApiUrl("http://localhost:" + wireMock.port());
+        cloud.setTemplates(List.of(template));
+        j.jenkins.clouds.add(cloud);
+
+        ProxmoxMinimumInstances.checkForMinimumInstances(); // synchronous on the calling thread
+
+        verify(0, anyRequestedFor(anyUrl()));
+    }
+
+    @Test
+    public void validateTemplateMinimumsAcceptsMinWithinCapOrUnlimited() throws Exception {
+        ProxmoxTemplate withinCap = new ProxmoxTemplate("t", "pve1", 100, "linux", 1);
+        withinCap.setInstanceCap(4);
+        withinCap.setInstanceMin(4); // at the cap is allowed
+        ProxmoxTemplate unlimited = new ProxmoxTemplate("u", "pve1", 100, "linux", 1);
+        unlimited.setInstanceMin(5); // cap 0 = unlimited, any minimum allowed
+        ProxmoxCloud.validateTemplateMinimums(List.of(withinCap, unlimited)); // must not throw
+    }
+
+    @Test(expected = Descriptor.FormException.class)
+    public void validateTemplateMinimumsRejectsMinAboveCap() throws Exception {
+        ProxmoxTemplate bad = new ProxmoxTemplate("t", "pve1", 100, "linux", 1);
+        bad.setInstanceCap(2);
+        bad.setInstanceMin(3);
+        ProxmoxCloud.validateTemplateMinimums(List.of(bad));
     }
 
     private static void setOfflineCauseTimestamp(OfflineCause cause, long timestampMs) throws Exception {

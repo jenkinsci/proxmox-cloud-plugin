@@ -125,6 +125,11 @@
                           checkMessage="Instance cap must be >= 0"/>
             </f:entry>
 
+            <f:entry title="Instance Minimum (warm pool, 0 = none)" field="instanceMin">
+                <f:number default="0" min="0" clazz="non-negative-number-required"
+                          checkMessage="Instance minimum must be >= 0"/>
+            </f:entry>
+
             <f:entry title="Max Total Uses (0 = unlimited)" field="maxTotalUses">
                 <f:number default="0" min="0" clazz="non-negative-number-required"
                           checkMessage="Max total uses must be >= 0"/>

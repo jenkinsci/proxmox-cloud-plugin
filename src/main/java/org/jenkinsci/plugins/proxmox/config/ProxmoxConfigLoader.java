@@ -252,6 +252,9 @@ public class ProxmoxConfigLoader {
         if (configMap.containsKey("instanceCap")) {
             template.setInstanceCap(getInt(configMap, "instanceCap", 0));
         }
+        if (configMap.containsKey("instanceMin")) {
+            template.setInstanceMin(getInt(configMap, "instanceMin", 0));
+        }
         if (configMap.containsKey("maxTotalUses")) {
             template.setMaxTotalUses(getInt(configMap, "maxTotalUses", 0));
         }
