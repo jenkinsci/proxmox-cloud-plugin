@@ -122,6 +122,52 @@ public class ProxmoxClient {
         return put("/api2/json/nodes/" + node + "/qemu/" + vmId + "/config", params);
     }
 
+    /**
+     * Point the VM's primary NIC ({@code net0}) at the given bridge, preserving the NIC model, MAC,
+     * and every other {@code net0} option (firewall, VLAN tag, MTU, rate, ...). Reads the current
+     * {@code net0}, swaps only its {@code bridge=} component, and writes it back. If the VM has no
+     * {@code net0} the call is a no-op (logged at WARNING). Used to apply the template's
+     * "Network Bridge" override after a clone, which otherwise inherits the template's bridge.
+     */
+    public void setNetworkBridge(String node, int vmId, String bridge) {
+        JsonObject config = getVmConfig(node, vmId);
+        if (!config.has("net0") || config.get("net0").isJsonNull()) {
+            LOGGER.warning("VM " + vmId + " on node " + node
+                    + " has no net0 device; cannot apply network bridge " + bridge);
+            return;
+        }
+        String net0 = config.get("net0").getAsString();
+        String updated = replaceBridge(net0, bridge);
+        if (updated.equals(net0)) {
+            return;
+        }
+        Map<String, String> params = new HashMap<>();
+        params.put("net0", updated);
+        put("/api2/json/nodes/" + node + "/qemu/" + vmId + "/config", params);
+    }
+
+    /**
+     * Swap the {@code bridge=} component of a Proxmox {@code netN} value, leaving all other
+     * components (the {@code model=MAC} pair, {@code firewall}, {@code tag}, {@code mtu}, ...) in
+     * place and in their original order. A {@code netN} value looks like
+     * {@code "virtio=BC:24:11:2A:3B:4C,bridge=vmbr0,firewall=1"}. If no {@code bridge=} component is
+     * present one is appended. Package-private for unit testing.
+     */
+    static String replaceBridge(String net, String bridge) {
+        String[] parts = net.split(",");
+        boolean replaced = false;
+        for (int i = 0; i < parts.length; i++) {
+            if (parts[i].startsWith("bridge=")) {
+                parts[i] = "bridge=" + bridge;
+                replaced = true;
+            }
+        }
+        if (!replaced) {
+            return net + ",bridge=" + bridge;
+        }
+        return String.join(",", parts);
+    }
+
     public String startVm(String node, int vmId) {
         return post("/api2/json/nodes/" + node + "/qemu/" + vmId + "/status/start", Map.of());
     }

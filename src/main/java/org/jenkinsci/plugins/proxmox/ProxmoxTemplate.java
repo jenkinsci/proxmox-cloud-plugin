@@ -125,6 +125,11 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             client.configureVm(node, newVmId, vmConfig);
         }
 
+        if (networkBridge != null && !networkBridge.isBlank()) {
+            log.println("[Proxmox] Setting network bridge to " + networkBridge);
+            client.setNetworkBridge(node, newVmId, networkBridge);
+        }
+
         if (diskSizeGb > 0) {
             log.println("[Proxmox] Resizing disk scsi0 to " + diskSizeGb + "G");
             client.resizeVmDisk(node, newVmId, "scsi0", diskSizeGb);

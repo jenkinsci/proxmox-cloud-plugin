@@ -538,10 +538,6 @@ spikes, routing jobs to either by label.
   design choice, not a limitation of the Proxmox API: the controller dials out to each agent over
   SSH once cloud-init has injected the key, which keeps provisioning simple and matches the EC2
   plugin's default for Unix hosts. It is unrelated to the user-data limitation below.
-- **Network Bridge is not applied**
-  ([#22](https://github.com/aidanc/proxmox-cloud-plugin/issues/22)). The field is present in the UI
-  and YAML but ignored at provision time, so clones always inherit the bridge defined on the template
-  image. Leave it blank and set the bridge on the template.
 - **User Data Script is not applied**
   ([#23](https://github.com/aidanc/proxmox-cloud-plugin/issues/23)). Custom cloud-init user-data
   needs a snippet referenced through `cicustom`, and the Proxmox API cannot store snippets: its

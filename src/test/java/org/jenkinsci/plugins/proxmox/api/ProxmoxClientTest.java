@@ -232,6 +232,65 @@ public class ProxmoxClientTest {
     }
 
     @Test
+    public void testSetNetworkBridge() {
+        // A clone inherits the template's net0; setNetworkBridge reads it, swaps only the bridge=
+        // component, and writes the result back, preserving the NIC model, MAC, and other options.
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
+                .willReturn(okJson("{\"data\":{\"net0\":\"virtio=BC:24:11:2A:3B:4C,bridge=vmbr0,firewall=1\"}}")));
+        stubFor(put(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
+                .willReturn(okJson("{\"data\":null}")));
+
+        client.setNetworkBridge("pve1", 300, "vmbr1");
+
+        // The PUT body is form-url-encoded, so '=' -> %3D, ':' -> %3A, ',' -> %2C.
+        verify(putRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
+                .withRequestBody(containing("net0="))
+                .withRequestBody(containing("bridge%3Dvmbr1"))     // new bridge applied
+                .withRequestBody(containing("virtio%3DBC%3A24"))   // NIC model + MAC preserved
+                .withRequestBody(containing("firewall%3D1")));     // other net0 options preserved
+    }
+
+    @Test
+    public void testSetNetworkBridgeNoNet0DoesNotWrite() {
+        // A VM with no net0 device cannot have a bridge applied; the call is a no-op, not a write.
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
+                .willReturn(okJson("{\"data\":{\"cores\":2}}")));
+
+        client.setNetworkBridge("pve1", 300, "vmbr1");
+
+        verify(0, putRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config")));
+    }
+
+    @Test
+    public void testSetNetworkBridgeNoChangeSkipsWrite() {
+        // Already on the requested bridge: skip the PUT to avoid a pointless config write.
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
+                .willReturn(okJson("{\"data\":{\"net0\":\"virtio=BC:24:11:2A:3B:4C,bridge=vmbr1\"}}")));
+
+        client.setNetworkBridge("pve1", 300, "vmbr1");
+
+        verify(0, putRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config")));
+    }
+
+    @Test
+    public void testReplaceBridgeSwapsOnlyBridgeComponent() {
+        assertEquals("virtio=BC:24:11:2A:3B:4C,bridge=vmbr1,firewall=1",
+                ProxmoxClient.replaceBridge("virtio=BC:24:11:2A:3B:4C,bridge=vmbr0,firewall=1", "vmbr1"));
+    }
+
+    @Test
+    public void testReplaceBridgePreservesOrderAndOptions() {
+        assertEquals("virtio=BC:24:11:2A:3B:4C,bridge=vmbr2,tag=10,mtu=1500",
+                ProxmoxClient.replaceBridge("virtio=BC:24:11:2A:3B:4C,bridge=vmbr0,tag=10,mtu=1500", "vmbr2"));
+    }
+
+    @Test
+    public void testReplaceBridgeAppendsWhenAbsent() {
+        assertEquals("virtio=BC:24:11:2A:3B:4C,bridge=vmbr0",
+                ProxmoxClient.replaceBridge("virtio=BC:24:11:2A:3B:4C", "vmbr0"));
+    }
+
+    @Test
     public void testGetNextVmIdWithMinAboveDefault() {
         stubFor(get(urlEqualTo("/api2/json/cluster/nextid"))
                 .willReturn(okJson("{\"data\":\"103\"}")));
