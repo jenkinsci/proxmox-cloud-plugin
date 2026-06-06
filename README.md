@@ -42,10 +42,15 @@ flowchart LR
     X -->|yes| D[Graceful shutdown<br/>then destroy VM]
 ```
 
-Disk resize and Java install are skipped when not configured. For contributors, the moving parts are
-`ProxmoxCloud` (config + provisioning), `ProxmoxTemplate` (per-VM clone config), `ProxmoxLauncher`
-(IP discovery, Java install, SSH handoff), `ProxmoxRetentionStrategy` (idle / reuse decisions), and
-`ProxmoxOrphanCleanup` (reconciliation). See [CLAUDE.md](CLAUDE.md) for the full architecture map.
+Disk resize and Java install are skipped when not configured. For contributors, the main components are:
+
+- `ProxmoxCloud`: cloud config and provisioning
+- `ProxmoxTemplate`: per-VM clone and cloud-init config
+- `ProxmoxLauncher`: IP discovery, Java install, SSH handoff
+- `ProxmoxRetentionStrategy`: idle and reuse-cap decisions
+- `ProxmoxOrphanCleanup`: reconciliation of leaked VMs and dead nodes
+- `api/`: Proxmox REST client and response models
+- `config/`: credentials, YAML config sync, and enums
 
 ## Setup
 
@@ -514,8 +519,8 @@ will feel familiar.
   stays on your network.
 - It provisions by **cloning a VM template and configuring it through cloud-init**, rather than
   launching an AMI.
-- It **installs the agent JRE over SSH** at launch, so you do not have to bake Java into every image.
-- It **resizes the clone's disk** through the API, so one thin template image serves agents of
+- It (optionally) **installs the agent JRE over SSH** at launch, so you do not have to bake Java into every image.
+- It (optionally) **resizes the clone's disk** through the API, so one thin template image serves agents of
   different sizes.
 - It ships a **built-in git-backed YAML config sync** with drift detection and read-only protection,
   rather than relying solely on JCasC or Groovy.
@@ -527,7 +532,7 @@ will feel familiar.
 The EC2 plugin pitches itself as a way to spill spiky load from a small in-house cluster out to EC2.
 This plugin is the other half of that story: it turns your own Proxmox capacity into the elastic
 agent pool, which is a strong fit for homelabs and on-prem CI where a cloud bill or data egress is
-unwelcome. It also runs happily **alongside** the EC2 plugin. Jenkins supports multiple clouds at
+unwelcome. It also runs happily alongside the EC2 plugin. Jenkins supports multiple clouds at
 once, so you can keep steady or sensitive workloads on local Proxmox capacity and burst to EC2 for
 spikes, routing jobs to either by label.
 
@@ -535,9 +540,14 @@ spikes, routing jobs to either by label.
 
 - **QEMU only.** LXC containers are not supported.
 - **SSH only.** Agents connect over SSH; there is no inbound JNLP/WebSocket launcher. This is a
-  design choice, not a limitation of the Proxmox API: the controller dials out to each agent over
-  SSH once cloud-init has injected the key, which keeps provisioning simple and matches the EC2
-  plugin's default for Unix hosts.
+  Proxmox API limitation, not just a design choice. An inbound agent has to receive its controller
+  URL and secret at first boot, which means injecting arbitrary cloud-init user-data. On Proxmox
+  that needs a snippet file on the host, and the API cannot upload one (its storage upload endpoint
+  only accepts `content=iso|vztmpl|import`). Staging the snippet requires out-of-band host access
+  (for example copying it over SSH) or extra tooling on the Proxmox server. The native cloud-init
+  parameters the API does expose (user, SSH key, IP, DNS) are enough to inject an SSH key, so the
+  controller dials out over SSH instead. Inbound agent support could be added on request, subject to
+  these constraints; open a feature request on the [issue tracker](https://github.com/jenkinsci/proxmox-cloud-plugin/issues).
 
 ## Building from Source
 
