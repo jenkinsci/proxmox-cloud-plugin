@@ -1,0 +1,16 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core">
+    <div class="alert alert-warning">
+        <strong>Proxmox orphan cleanup: restart required for the reduced period</strong>
+        <p>
+            Orphan cleanup is currently running every ${it.scheduledPeriodSeconds} seconds, the cadence
+            set when Jenkins last started. One or more clouds now request a shorter Orphan Cleanup
+            Period (as low as ${it.effectivePeriodSeconds} seconds): ${it.affectedCloudsDisplay}.
+        </p>
+        <p>
+            The shorter period will not take effect until Jenkins is restarted. Increasing a period,
+            by contrast, takes effect immediately. This notice clears itself once you restart (or raise
+            the period back).
+        </p>
+    </div>
+</j:jelly>

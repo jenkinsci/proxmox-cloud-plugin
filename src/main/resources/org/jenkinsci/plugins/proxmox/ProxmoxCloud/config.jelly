@@ -98,6 +98,10 @@
 
         <f:optionalBlock title="Cleanup Orphaned Agents" field="cleanupOrphanedAgents"
                          inline="true" checked="${instance.cleanupOrphanedAgents}">
+            <f:entry title="Orphan Cleanup Period (seconds)" field="orphanCleanupPeriodSeconds">
+                <f:number default="600" min="30" clazz="positive-number-required"
+                          checkMessage="Must be at least 30 seconds"/>
+            </f:entry>
             <f:entry title="Orphan Cleanup Grace Period (seconds)" field="orphanCleanupGracePeriodSeconds">
                 <f:number default="300" min="1" clazz="positive-number-required"
                           checkMessage="Must be at least 1 second"/>

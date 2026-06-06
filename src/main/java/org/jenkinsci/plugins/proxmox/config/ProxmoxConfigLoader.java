@@ -188,6 +188,9 @@ public class ProxmoxConfigLoader {
         if (configMap.containsKey("orphanCleanupGracePeriodSeconds")) {
             cloud.setOrphanCleanupGracePeriodSeconds(getInt(configMap, "orphanCleanupGracePeriodSeconds", 300));
         }
+        if (configMap.containsKey("orphanCleanupPeriodSeconds")) {
+            cloud.setOrphanCleanupPeriodSeconds(getInt(configMap, "orphanCleanupPeriodSeconds", 600));
+        }
 
         return cloud;
     }

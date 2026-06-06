@@ -58,6 +58,7 @@ public class ProxmoxCloud extends Cloud {
     private int startVmId;
     private boolean cleanupOrphanedAgents;
     private int orphanCleanupGracePeriodSeconds = 300;
+    private int orphanCleanupPeriodSeconds = 600;
     private boolean configManaged;
     private long lastSyncTimestamp;
     private long lastConfigTimestamp;
@@ -76,11 +77,14 @@ public class ProxmoxCloud extends Cloud {
     }
 
     protected Object readResolve() {
-        // Field added after initial release; clouds persisted before it (or with an out-of-range
-        // value) deserialize with 0 because XStream skips field initializers. Restore the default
-        // so orphan cleanup never acts with a zero grace period.
+        // Fields added after initial release; clouds persisted before them (or with an out-of-range
+        // value) deserialize with 0 because XStream skips field initializers. Restore the defaults so
+        // orphan cleanup never acts with a zero grace period or reconciles in a tight loop.
         if (orphanCleanupGracePeriodSeconds < 1) {
             orphanCleanupGracePeriodSeconds = 300;
+        }
+        if (orphanCleanupPeriodSeconds < 30) {
+            orphanCleanupPeriodSeconds = 600;
         }
         return this;
     }
@@ -299,6 +303,7 @@ public class ProxmoxCloud extends Cloud {
     public int getOperationTimeout() { return operationTimeout; }
     public int getStartVmId() { return startVmId; }
     public int getOrphanCleanupGracePeriodSeconds() { return orphanCleanupGracePeriodSeconds; }
+    public int getOrphanCleanupPeriodSeconds() { return orphanCleanupPeriodSeconds; }
     public boolean isCleanupOrphanedAgents() { return cleanupOrphanedAgents; }
     public boolean isConfigManaged() { return configManaged; }
     public long getLastSyncTimestamp() { return lastSyncTimestamp; }
@@ -346,6 +351,10 @@ public class ProxmoxCloud extends Cloud {
     @DataBoundSetter public void setOrphanCleanupGracePeriodSeconds(int v) {
         if (v < 1) throw new IllegalArgumentException("Agent removal grace period must be at least 1 second");
         this.orphanCleanupGracePeriodSeconds = v;
+    }
+    @DataBoundSetter public void setOrphanCleanupPeriodSeconds(int v) {
+        if (v < 30) throw new IllegalArgumentException("Orphan cleanup period must be at least 30 seconds");
+        this.orphanCleanupPeriodSeconds = v;
     }
     @DataBoundSetter public void setConfigManaged(boolean v) { this.configManaged = v; }
     @DataBoundSetter public void setLastSyncTimestamp(long v) { this.lastSyncTimestamp = v; }
@@ -464,6 +473,13 @@ public class ProxmoxCloud extends Cloud {
         public FormValidation doCheckOrphanCleanupGracePeriodSeconds(@QueryParameter int value) {
             if (value < 1) {
                 return FormValidation.error("Must be at least 1 second");
+            }
+            return FormValidation.ok();
+        }
+
+        public FormValidation doCheckOrphanCleanupPeriodSeconds(@QueryParameter int value) {
+            if (value < 30) {
+                return FormValidation.error("Must be at least 30 seconds");
             }
             return FormValidation.ok();
         }

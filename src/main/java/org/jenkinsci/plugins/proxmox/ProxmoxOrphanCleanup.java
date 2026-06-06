@@ -2,6 +2,7 @@ package org.jenkinsci.plugins.proxmox;
 
 import com.google.gson.JsonObject;
 import hudson.Extension;
+import hudson.ExtensionList;
 import hudson.model.AsyncPeriodicWork;
 import hudson.model.Computer;
 import hudson.model.TaskListener;
@@ -19,6 +20,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -27,27 +29,89 @@ import java.util.logging.Logger;
 public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
 
     private static final Logger LOGGER = Logger.getLogger(ProxmoxOrphanCleanup.class.getName());
-    // Cadence mirrors the EC2 plugin's EC2SlaveMonitor (10 min), overridable like its
-    // jenkins.ec2.checkAlivePeriod system property.
-    private static final long RECURRENCE_MS =
-            Long.getLong("jenkins.proxmox.orphanCleanupPeriodMs", TimeUnit.MINUTES.toMillis(10));
+    /**
+     * Optional global override (ms). When set it forces both the firing cadence and the per-cloud
+     * reconcile period for every cloud, ignoring the per-cloud {@code orphanCleanupPeriodSeconds}.
+     * Handy for tests/ops to force a uniform fast cadence; mirrors the EC2 plugin's
+     * jenkins.ec2.checkAlivePeriod escape hatch.
+     */
+    private static final Long PERIOD_OVERRIDE_MS = Long.getLong("jenkins.proxmox.orphanCleanupPeriodMs");
+
+    /** Never fire (or poll the Proxmox API) more than twice a minute, whatever the configured period. */
+    private static final long MIN_BASE_MS = TimeUnit.SECONDS.toMillis(30);
+
+    /** Base cadence when no cleanup-enabled cloud is configured yet (matches the field default). */
+    private static final long DEFAULT_PERIOD_MS = TimeUnit.MINUTES.toMillis(10);
+
+    // When each cloud was last reconciled (keyed by cloud name). The work fires on the base cadence
+    // (the smallest configured period) and gates each cloud here on its own period, so per-cloud edits
+    // take effect without a restart for any value at or above the startup base.
+    private final Map<String, Long> lastCleanupByCloud = new ConcurrentHashMap<>();
+
+    // The period (ms) Jenkins actually scheduled the fixed-rate timer with, captured on the first
+    // getRecurrencePeriod() call. -1 until scheduled. Compared against live config so the restart
+    // monitor can warn when an edit reduced the period below the cadence the work is running at.
+    private volatile long scheduledPeriodMs = -1;
 
     public ProxmoxOrphanCleanup() {
         super("Proxmox Orphan Cleanup");
     }
 
+    /**
+     * Fire on the smallest configured cloud period (floored at {@link #MIN_BASE_MS}), or the override
+     * when set. Jenkins reads this once when scheduling the work; per-cloud gating in {@link #execute}
+     * then applies any later edit at or above this base. Lowering a cloud's period below the startup
+     * base only fires faster after a restart, which {@link ProxmoxOrphanCleanupRestartMonitor} surfaces.
+     */
     @Override
     public long getRecurrencePeriod() {
-        return RECURRENCE_MS;
+        long period = computeBasePeriod();
+        if (scheduledPeriodMs < 0) {
+            // Capture the value Jenkins schedules the fixed-rate timer with, so the restart monitor can
+            // detect a later edit that reduced the period below the running cadence.
+            scheduledPeriodMs = period;
+        }
+        return period;
+    }
+
+    /** The base cadence implied by current config: smallest cleanup-enabled period (floored), or override. */
+    long computeBasePeriod() {
+        if (PERIOD_OVERRIDE_MS != null) {
+            return PERIOD_OVERRIDE_MS;
+        }
+        long smallest = Long.MAX_VALUE;
+        Jenkins jenkins = Jenkins.getInstanceOrNull();
+        if (jenkins != null) {
+            for (Cloud cloud : jenkins.clouds) {
+                if (cloud instanceof ProxmoxCloud proxmoxCloud && proxmoxCloud.isCleanupOrphanedAgents()) {
+                    smallest = Math.min(smallest, (long) proxmoxCloud.getOrphanCleanupPeriodSeconds() * 1000);
+                }
+            }
+        }
+        if (smallest == Long.MAX_VALUE) {
+            smallest = DEFAULT_PERIOD_MS;
+        }
+        return Math.max(smallest, MIN_BASE_MS);
     }
 
     @Override
     protected void execute(TaskListener listener) {
         Jenkins jenkins = Jenkins.get();
+        long now = System.currentTimeMillis();
 
         for (Cloud cloud : jenkins.clouds) {
             if (!(cloud instanceof ProxmoxCloud proxmoxCloud)) continue;
             if (!proxmoxCloud.isCleanupOrphanedAgents()) continue;
+
+            long periodMs = PERIOD_OVERRIDE_MS != null
+                    ? PERIOD_OVERRIDE_MS
+                    : (long) proxmoxCloud.getOrphanCleanupPeriodSeconds() * 1000;
+            if (!isDue(lastCleanupByCloud.get(proxmoxCloud.name), now, periodMs)) {
+                continue;
+            }
+            // Record the attempt before running so a cloud whose cleanup throws waits a full period
+            // rather than retrying every base tick.
+            lastCleanupByCloud.put(proxmoxCloud.name, now);
 
             try {
                 cleanupCloud(proxmoxCloud, jenkins);
@@ -55,6 +119,60 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
                 LOGGER.log(Level.WARNING, "Orphan cleanup failed for cloud " + proxmoxCloud.name, e);
             }
         }
+    }
+
+    /** Whether a cloud is due for reconcile: never run before, or its period has elapsed. Pure for testing. */
+    static boolean isDue(Long lastRun, long nowMs, long periodMs) {
+        return lastRun == null || nowMs - lastRun >= periodMs;
+    }
+
+    /** The singleton instance Jenkins registered. */
+    static ProxmoxOrphanCleanup get() {
+        return ExtensionList.lookupSingleton(ProxmoxOrphanCleanup.class);
+    }
+
+    /**
+     * Whether a cloud's cleanup period was reduced below the cadence the work is currently scheduled
+     * at, so the faster cadence needs a Jenkins restart to take effect. False when an override forces
+     * the period, or before the work has been scheduled. Increasing a period never needs a restart
+     * (the work just fires more often than needed, which the per-cloud gating absorbs).
+     */
+    boolean isRestartNeededForReducedPeriod() {
+        if (PERIOD_OVERRIDE_MS != null) {
+            return false;
+        }
+        long scheduled = scheduledPeriodMs;
+        return scheduled > 0 && computeBasePeriod() < scheduled;
+    }
+
+    /** The cadence (seconds) the work is currently scheduled at (what Jenkins is actually using). */
+    public long getScheduledPeriodSeconds() {
+        return scheduledPeriodMs / 1000;
+    }
+
+    /** The smallest cleanup-enabled period (seconds) currently configured. */
+    public long getEffectivePeriodSeconds() {
+        return computeBasePeriod() / 1000;
+    }
+
+    /** Names of cleanup-enabled clouds whose configured period is below the running cadence. */
+    List<String> cloudsNeedingRestart() {
+        List<String> names = new ArrayList<>();
+        long scheduled = scheduledPeriodMs;
+        if (PERIOD_OVERRIDE_MS != null || scheduled <= 0) {
+            return names;
+        }
+        Jenkins jenkins = Jenkins.getInstanceOrNull();
+        if (jenkins != null) {
+            for (Cloud cloud : jenkins.clouds) {
+                if (cloud instanceof ProxmoxCloud proxmoxCloud && proxmoxCloud.isCleanupOrphanedAgents()
+                        && Math.max((long) proxmoxCloud.getOrphanCleanupPeriodSeconds() * 1000, MIN_BASE_MS)
+                                < scheduled) {
+                    names.add(proxmoxCloud.name);
+                }
+            }
+        }
+        return names;
     }
 
     void cleanupCloud(ProxmoxCloud cloud, Jenkins jenkins) {

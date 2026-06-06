@@ -121,6 +121,24 @@ public class ProxmoxCloudTest {
         new ProxmoxCloud("test-cloud").setOrphanCleanupGracePeriodSeconds(0);
     }
 
+    @Test
+    public void testOrphanCleanupPeriodDefault() {
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        assertEquals(600, cloud.getOrphanCleanupPeriodSeconds());
+    }
+
+    @Test
+    public void testOrphanCleanupPeriodAccepted() {
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        cloud.setOrphanCleanupPeriodSeconds(30); // the minimum allowed
+        assertEquals(30, cloud.getOrphanCleanupPeriodSeconds());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testOrphanCleanupPeriodRejectsBelowMinimum() {
+        new ProxmoxCloud("test-cloud").setOrphanCleanupPeriodSeconds(29);
+    }
+
     // --- concurrent, race-safe id reservation (issue #17) ---
 
     @Test

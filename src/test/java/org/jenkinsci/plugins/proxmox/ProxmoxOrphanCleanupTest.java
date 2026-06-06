@@ -5,6 +5,7 @@ import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.client.WireMock;
 import hudson.model.Node;
+import hudson.model.TaskListener;
 import hudson.util.Secret;
 import org.jenkinsci.plugins.proxmox.ProxmoxOrphanCleanup.DeadAgent;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
@@ -344,6 +345,134 @@ public class ProxmoxOrphanCleanupTest {
 
         verify(0, deleteRequestedFor(urlPathEqualTo("/api2/json/nodes/pve1/qemu/305")));
         assertNull("the stale Jenkins node must still be removed", j.jenkins.getNode("agent-stale"));
+    }
+
+    // --- cadence + per-cloud gating (issue #19) ---
+
+    @Test
+    public void isDue_firstRunAlwaysDue() {
+        assertTrue(ProxmoxOrphanCleanup.isDue(null, 1_000L, 600_000L));
+    }
+
+    @Test
+    public void isDue_trueOncePeriodElapsed() {
+        assertTrue("exactly at the period is due", ProxmoxOrphanCleanup.isDue(0L, 600_000L, 600_000L));
+        assertTrue("past the period is due", ProxmoxOrphanCleanup.isDue(0L, 700_000L, 600_000L));
+    }
+
+    @Test
+    public void isDue_falseWithinPeriod() {
+        assertFalse(ProxmoxOrphanCleanup.isDue(0L, 599_999L, 600_000L));
+    }
+
+    @Test
+    public void recurrencePeriod_defaultsWhenNoCloudsConfigured() {
+        assertEquals(600_000L, new ProxmoxOrphanCleanup().getRecurrencePeriod());
+    }
+
+    @Test
+    public void recurrencePeriod_usesSmallestEnabledCloudPeriod() {
+        ProxmoxCloud a = new ProxmoxCloud("cloud-a");
+        a.setCleanupOrphanedAgents(true);
+        a.setOrphanCleanupPeriodSeconds(300);
+        ProxmoxCloud b = new ProxmoxCloud("cloud-b");
+        b.setCleanupOrphanedAgents(true);
+        b.setOrphanCleanupPeriodSeconds(120);
+        j.jenkins.clouds.add(a);
+        j.jenkins.clouds.add(b);
+
+        assertEquals(120_000L, new ProxmoxOrphanCleanup().getRecurrencePeriod());
+    }
+
+    @Test
+    public void recurrencePeriod_honorsThirtySecondMinimum() {
+        ProxmoxCloud fast = new ProxmoxCloud("cloud-fast");
+        fast.setCleanupOrphanedAgents(true);
+        fast.setOrphanCleanupPeriodSeconds(30); // the minimum allowed period
+        j.jenkins.clouds.add(fast);
+
+        assertEquals(30_000L, new ProxmoxOrphanCleanup().getRecurrencePeriod());
+    }
+
+    @Test
+    public void recurrencePeriod_ignoresCleanupDisabledClouds() {
+        ProxmoxCloud disabled = new ProxmoxCloud("cloud-disabled");
+        disabled.setCleanupOrphanedAgents(false);
+        disabled.setOrphanCleanupPeriodSeconds(30); // would lower the base if it were counted
+        ProxmoxCloud enabled = new ProxmoxCloud("cloud-enabled");
+        enabled.setCleanupOrphanedAgents(true);
+        enabled.setOrphanCleanupPeriodSeconds(300);
+        j.jenkins.clouds.add(disabled);
+        j.jenkins.clouds.add(enabled);
+
+        assertEquals(300_000L, new ProxmoxOrphanCleanup().getRecurrencePeriod());
+    }
+
+    @Test
+    public void execute_gatesSecondRunWithinPeriod() throws Exception {
+        ProxmoxCloud cloud = cloudPointingAtWireMock(); // cleanup enabled, default 600s period
+        j.jenkins.clouds.add(cloud);
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
+                .willReturn(okJson("{\"data\":[]}")));
+
+        ProxmoxOrphanCleanup cleanup = new ProxmoxOrphanCleanup();
+        cleanup.execute(TaskListener.NULL);
+        cleanup.execute(TaskListener.NULL); // immediate second pass: gated by the 600s period
+
+        verify(1, getRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu")));
+    }
+
+    // --- restart-required monitor when a period is reduced below the scheduled cadence (issue #19) ---
+
+    private ProxmoxCloud cleanupCloud(String name, int periodSeconds) {
+        ProxmoxCloud cloud = new ProxmoxCloud(name);
+        cloud.setCleanupOrphanedAgents(true);
+        cloud.setOrphanCleanupPeriodSeconds(periodSeconds);
+        j.jenkins.clouds.add(cloud);
+        return cloud;
+    }
+
+    @Test
+    public void restartMonitor_inactiveWhenPeriodNotReduced() {
+        cleanupCloud("c", 600);
+        ProxmoxOrphanCleanup work = new ProxmoxOrphanCleanup();
+        work.getRecurrencePeriod(); // schedules at 600s
+        assertFalse(work.isRestartNeededForReducedPeriod());
+        assertTrue(work.cloudsNeedingRestart().isEmpty());
+    }
+
+    @Test
+    public void restartMonitor_activatesWhenPeriodReducedBelowScheduled() {
+        ProxmoxCloud cloud = cleanupCloud("c", 600);
+        ProxmoxOrphanCleanup work = new ProxmoxOrphanCleanup();
+        work.getRecurrencePeriod(); // captures scheduled = 600s
+
+        cloud.setOrphanCleanupPeriodSeconds(40); // reduced live, no restart yet
+
+        assertTrue(work.isRestartNeededForReducedPeriod());
+        assertEquals(List.of("c"), work.cloudsNeedingRestart());
+        assertEquals(600, work.getScheduledPeriodSeconds());
+        assertEquals(40, work.getEffectivePeriodSeconds());
+    }
+
+    @Test
+    public void restartMonitor_clearsWhenPeriodRaisedBack() {
+        ProxmoxCloud cloud = cleanupCloud("c", 600);
+        ProxmoxOrphanCleanup work = new ProxmoxOrphanCleanup();
+        work.getRecurrencePeriod();
+        cloud.setOrphanCleanupPeriodSeconds(40);
+        assertTrue(work.isRestartNeededForReducedPeriod());
+
+        cloud.setOrphanCleanupPeriodSeconds(600); // raised back to the scheduled cadence
+
+        assertFalse(work.isRestartNeededForReducedPeriod());
+    }
+
+    @Test
+    public void restartMonitor_inactiveBeforeWorkScheduled() {
+        cleanupCloud("c", 40);
+        // getRecurrencePeriod() never called -> scheduledPeriodMs still -1 -> no false positive.
+        assertFalse(new ProxmoxOrphanCleanup().isRestartNeededForReducedPeriod());
     }
 
     private static long farFuture() {

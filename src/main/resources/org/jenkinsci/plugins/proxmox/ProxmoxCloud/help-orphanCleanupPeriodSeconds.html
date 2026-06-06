@@ -1,0 +1,16 @@
+<div>
+    How often the periodic orphan cleanup reconciles this cloud (only relevant when
+    <b>Cleanup Orphaned Agents</b> is enabled). Each pass destroys <code>jenkins-managed</code> VMs
+    with no Jenkins node and removes dead agent nodes whose backing VM is gone (subject to the
+    <b>Orphan Cleanup Grace Period</b>).
+
+    <p>
+        Changing this takes effect without a Jenkins restart, except when you <i>reduce</i> it below
+        the smallest period configured when Jenkins last started: the cleanup thread is scheduled once
+        at startup, so a reduction needs a restart to fire faster. Jenkins shows an administrative
+        monitor warning when this happens. Increasing the period always applies immediately.
+    </p>
+
+    Lower it to reclaim leaked VMs and dead nodes sooner; raise it to reduce API traffic to Proxmox.
+    Default: 600 seconds (10 minutes). Minimum: 30 seconds (also the finest cleanup cadence).
+</div>
