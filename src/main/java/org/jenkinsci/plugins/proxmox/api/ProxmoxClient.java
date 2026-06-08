@@ -332,6 +332,10 @@ public class ProxmoxClient {
         }
     }
 
+    // Reachable only when the admin enables ignoreSslErrors (default false) on the ADMINISTER-gated cloud
+    // config page, and the resulting context is applied to this one HttpClient, never the JVM-global default
+    // (no HttpsURLConnection.setDefault*). Both conditions the rule asks for are met; false positive.
+    @SuppressWarnings("lgtm[jenkins/unsafe-calls]")
     private static SSLContext createTrustAllSslContext() {
         try {
             SSLContext sslContext = SSLContext.getInstance("TLS");

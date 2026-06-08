@@ -10,6 +10,9 @@ import org.kohsuke.stapler.DataBoundConstructor;
 
 public class ProxmoxTokenCredentialsImpl extends BaseStandardCredentials implements ProxmoxTokenCredentials {
 
+    // tokenId is the token identifier (USER@REALM!TOKENID), the non-secret half of a Proxmox API token,
+    // analogous to a username. The secret half (tokenSecret) is already a Secret. Security-scan false positive.
+    @SuppressWarnings("lgtm[jenkins/plaintext-storage]")
     private final String tokenId;
     private final Secret tokenSecret;
 
