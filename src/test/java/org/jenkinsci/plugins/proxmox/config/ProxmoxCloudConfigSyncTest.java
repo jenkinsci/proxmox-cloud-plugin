@@ -1,10 +1,15 @@
 package org.jenkinsci.plugins.proxmox.config;
 
+import hudson.model.User;
+import hudson.security.ACL;
+import hudson.security.ACLContext;
 import hudson.util.FormValidation;
 import jenkins.model.GlobalConfiguration;
+import jenkins.model.Jenkins;
 import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.MockAuthorizationStrategy;
 
 import static org.junit.Assert.*;
 
@@ -120,5 +125,26 @@ public class ProxmoxCloudConfigSyncTest {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         FormValidation result = config.doCheckYamlFilePath("");
         assertEquals(FormValidation.Kind.ERROR, result.kind);
+    }
+
+    @Test
+    public void doCheckMethodsRequireAdminPermission() throws Exception {
+        // The config-sync doCheck methods return OK for a user lacking ADMINISTER (issue #27).
+        j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
+        j.jenkins.setAuthorizationStrategy(new MockAuthorizationStrategy()
+                .grant(Jenkins.ADMINISTER).everywhere().to("admin")
+                .grant(Jenkins.READ).everywhere().to("reader"));
+        ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
+
+        try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
+            assertEquals(FormValidation.Kind.OK, config.doCheckGitUrl("").kind);
+            assertEquals(FormValidation.Kind.OK, config.doCheckYamlFilePath("").kind);
+            assertEquals(FormValidation.Kind.OK, config.doCheckCronSpec("not a cron expression").kind);
+        }
+        try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
+            assertEquals(FormValidation.Kind.ERROR, config.doCheckGitUrl("").kind);
+            assertEquals(FormValidation.Kind.ERROR, config.doCheckYamlFilePath("").kind);
+            assertEquals(FormValidation.Kind.ERROR, config.doCheckCronSpec("not a cron expression").kind);
+        }
     }
 }

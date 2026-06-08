@@ -408,11 +408,15 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             }
         }
 
+        @POST
         public ListBoxModel doFillNodeItems(
                 @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
                 @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
                 @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
             ListBoxModel model = new ListBoxModel();
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return model;
+            }
             ProxmoxClient client = tryCreateClient(apiUrl, credentialsId, ignoreSslErrors);
             if (client == null) {
                 model.add("(configure API connection first)", "");
@@ -433,12 +437,16 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return model;
         }
 
+        @POST
         public ListBoxModel doFillTemplateVmIdItems(
                 @QueryParameter("node") String node,
                 @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
                 @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
                 @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
             ListBoxModel model = new ListBoxModel();
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return model;
+            }
             if (node == null || node.isBlank()) {
                 model.add("(select a node first)", "");
                 return model;
@@ -464,12 +472,16 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return model;
         }
 
+        @POST
         public ListBoxModel doFillTargetStorageItems(
                 @QueryParameter("node") String node,
                 @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
                 @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
                 @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
             ListBoxModel model = new ListBoxModel();
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return model;
+            }
             model.add("(inherit from template)", "");
             if (node == null || node.isBlank()) return model;
             ProxmoxClient client = tryCreateClient(apiUrl, credentialsId, ignoreSslErrors);
@@ -485,12 +497,16 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return model;
         }
 
+        @POST
         public ListBoxModel doFillNetworkBridgeItems(
                 @QueryParameter("node") String node,
                 @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
                 @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
                 @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
             ListBoxModel model = new ListBoxModel();
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return model;
+            }
             model.add("(inherit from template)", "");
             if (node == null || node.isBlank()) return model;
             ProxmoxClient client = tryCreateClient(apiUrl, credentialsId, ignoreSslErrors);
@@ -508,11 +524,15 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return model;
         }
 
+        @POST
         public ListBoxModel doFillTargetPoolItems(
                 @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
                 @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
                 @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
             ListBoxModel model = new ListBoxModel();
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return model;
+            }
             model.add("(none)", "");
             ProxmoxClient client = tryCreateClient(apiUrl, credentialsId, ignoreSslErrors);
             if (client == null) return model;
@@ -544,13 +564,18 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return model;
         }
 
+        @POST
         public FormValidation doCheckNode(@QueryParameter String value) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
             if (value == null || value.isBlank()) {
                 return FormValidation.error("Proxmox Node is required");
             }
             return FormValidation.ok();
         }
 
+        @POST
         public FormValidation doCheckTemplateVmId(@QueryParameter int value) {
             if (value <= 0) {
                 return FormValidation.error("Template VM ID must be positive");
@@ -558,6 +583,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return FormValidation.ok();
         }
 
+        @POST
         public FormValidation doCheckInstanceMin(@QueryParameter int value, @QueryParameter int instanceCap) {
             if (value < 0) {
                 return FormValidation.error("Must be non-negative");
@@ -572,8 +598,12 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             return new ComboBoxModel("21", "25");
         }
 
+        @POST
         public FormValidation doCheckJavaMajorVersion(@QueryParameter String value,
                                                       @QueryParameter String javaDistribution) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
             // The version is only used when a distribution is selected (see ProxmoxLauncher).
             if (javaDistribution == null || javaDistribution.isBlank()
                     || JavaDistribution.NONE.name().equals(javaDistribution)) {

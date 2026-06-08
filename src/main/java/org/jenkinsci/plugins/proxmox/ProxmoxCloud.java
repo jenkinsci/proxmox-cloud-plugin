@@ -516,7 +516,11 @@ public class ProxmoxCloud extends Cloud {
             return model;
         }
 
+        @POST
         public FormValidation doCheckApiUrl(@QueryParameter String value) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
             if (value == null || value.isBlank()) {
                 return FormValidation.error("API URL is required");
             }
@@ -526,6 +530,7 @@ public class ProxmoxCloud extends Cloud {
             return FormValidation.ok();
         }
 
+        @POST
         public FormValidation doCheckStartVmId(@QueryParameter int value) {
             if (value < 0) {
                 return FormValidation.error("Must be non-negative (0 = default)");
@@ -536,6 +541,7 @@ public class ProxmoxCloud extends Cloud {
             return FormValidation.ok();
         }
 
+        @POST
         public FormValidation doCheckOrphanCleanupGracePeriodSeconds(@QueryParameter int value) {
             if (value < 1) {
                 return FormValidation.error("Must be at least 1 second");
@@ -543,6 +549,7 @@ public class ProxmoxCloud extends Cloud {
             return FormValidation.ok();
         }
 
+        @POST
         public FormValidation doCheckOrphanCleanupPeriodSeconds(@QueryParameter int value) {
             if (value < 30) {
                 return FormValidation.error("Must be at least 30 seconds");

@@ -8,9 +8,14 @@ import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Label;
 import hudson.model.Node;
+import hudson.model.User;
+import hudson.security.ACL;
+import hudson.security.ACLContext;
 import hudson.slaves.Cloud;
 import hudson.slaves.OfflineCause;
+import hudson.util.FormValidation;
 import hudson.util.Secret;
+import jenkins.model.Jenkins;
 import org.htmlunit.html.HtmlPage;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
@@ -21,6 +26,7 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.MockAuthorizationStrategy;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -276,6 +282,25 @@ public class ProxmoxCloudTest {
 
         assertFalse("Copy Template control must not render in read-only mode",
                 html.contains("proxmox-copy-template-button"));
+    }
+
+    @Test
+    public void doCheckApiUrlRequiresAdminPermission() throws Exception {
+        // doCheckApiUrl validates the cloud's API URL; gate it on ADMINISTER (issue #27).
+        j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
+        j.jenkins.setAuthorizationStrategy(new MockAuthorizationStrategy()
+                .grant(Jenkins.ADMINISTER).everywhere().to("admin")
+                .grant(Jenkins.READ).everywhere().to("reader"));
+        ProxmoxCloud.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxCloud.DescriptorImpl.class);
+
+        try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
+            assertEquals(FormValidation.Kind.OK, d.doCheckApiUrl("").kind);          // would normally error
+            assertEquals(FormValidation.Kind.OK, d.doCheckApiUrl("not-a-url").kind); // would normally error
+        }
+        try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckApiUrl("").kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckApiUrl("not-a-url").kind);
+        }
     }
 
     private static void setOfflineCauseTimestamp(OfflineCause cause, long timestampMs) throws Exception {

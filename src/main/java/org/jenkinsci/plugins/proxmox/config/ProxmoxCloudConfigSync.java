@@ -216,7 +216,11 @@ public class ProxmoxCloudConfigSync extends GlobalConfiguration {
                         CredentialsMatchers.always());
     }
 
+    @POST
     public FormValidation doCheckCronSpec(@QueryParameter String value) {
+        if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+            return FormValidation.ok();
+        }
         if (value == null || value.isBlank()) {
             return FormValidation.ok();
         }
@@ -228,14 +232,22 @@ public class ProxmoxCloudConfigSync extends GlobalConfiguration {
         }
     }
 
+    @POST
     public FormValidation doCheckGitUrl(@QueryParameter String value) {
+        if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+            return FormValidation.ok();
+        }
         if (value == null || value.isBlank()) {
             return FormValidation.error("Git repository URL is required");
         }
         return FormValidation.ok();
     }
 
+    @POST
     public FormValidation doCheckYamlFilePath(@QueryParameter String value) {
+        if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+            return FormValidation.ok();
+        }
         if (value == null || value.isBlank()) {
             return FormValidation.error("YAML file path is required");
         }

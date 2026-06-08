@@ -2,13 +2,19 @@ package org.jenkinsci.plugins.proxmox;
 
 import hudson.model.Label;
 import hudson.model.Node;
+import hudson.model.User;
+import hudson.security.ACL;
+import hudson.security.ACLContext;
 import hudson.util.ComboBoxModel;
 import hudson.util.FormValidation;
+import hudson.util.ListBoxModel;
+import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.MockAuthorizationStrategy;
 
 import static org.junit.Assert.*;
 
@@ -178,5 +184,51 @@ public class ProxmoxTemplateTest {
         ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
         assertEquals(FormValidation.Kind.WARNING, d.doCheckJavaMajorVersion("17", "OPENJDK").kind);
         assertEquals(FormValidation.Kind.WARNING, d.doCheckJavaMajorVersion("11", "CORRETTO").kind);
+    }
+
+    @Test
+    public void doFillItemsRequireAdminPermission() throws Exception {
+        // The Proxmox-connecting fill methods enumerate cluster inventory over the network, so they
+        // are gated on ADMINISTER (issue #27): a user without it gets an empty model and no API call.
+        j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
+        j.jenkins.setAuthorizationStrategy(new MockAuthorizationStrategy()
+                .grant(Jenkins.ADMINISTER).everywhere().to("admin")
+                .grant(Jenkins.READ).everywhere().to("reader"));
+        ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
+
+        try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
+            assertEquals(0, d.doFillNodeItems("", "", false).size());
+            assertEquals(0, d.doFillTemplateVmIdItems("node", "", "", false).size());
+            assertEquals(0, d.doFillTargetStorageItems("node", "", "", false).size());
+            assertEquals(0, d.doFillNetworkBridgeItems("node", "", "", false).size());
+            assertEquals(0, d.doFillTargetPoolItems("", "", false).size());
+        }
+
+        // An admin with no API connection configured still gets the methods' placeholder entries
+        // (tryCreateClient returns null), proving the guard is what emptied them for the reader above.
+        try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
+            ListBoxModel nodes = d.doFillNodeItems("", "", false);
+            assertFalse(nodes.isEmpty());
+            assertFalse(d.doFillTargetPoolItems("", "", false).isEmpty());
+        }
+    }
+
+    @Test
+    public void doCheckItemsSkipValidationWithoutAdminPermission() throws Exception {
+        // doCheck methods return OK for a user lacking ADMINISTER rather than running validation (issue #27).
+        j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
+        j.jenkins.setAuthorizationStrategy(new MockAuthorizationStrategy()
+                .grant(Jenkins.ADMINISTER).everywhere().to("admin")
+                .grant(Jenkins.READ).everywhere().to("reader"));
+        ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
+
+        try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
+            assertEquals(FormValidation.Kind.OK, d.doCheckNode("").kind);
+            assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("", "OPENJDK").kind);
+        }
+        try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckNode("").kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckJavaMajorVersion("", "OPENJDK").kind);
+        }
     }
 }
