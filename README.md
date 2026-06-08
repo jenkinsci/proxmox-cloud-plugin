@@ -226,6 +226,9 @@ Under cloud **Advanced** you can also set the per-cloud **Instance Cap**, **Oper
 
 #### Template Settings
 
+A cloud can hold multiple templates. **Add Template** creates a blank one; **Copy Template** (next to
+it) duplicates an existing template's current on-form values into a new row, leaving the Name blank.
+
 | Field | Value |
 |---|---|
 | Name | e.g. `ubuntu-agent` |

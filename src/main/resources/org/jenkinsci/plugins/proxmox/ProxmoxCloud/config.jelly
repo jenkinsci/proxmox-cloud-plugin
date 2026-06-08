@@ -1,5 +1,5 @@
 <?jelly escape-by-default='true'?>
-<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form" xmlns:c="/lib/credentials">
+<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form" xmlns:c="/lib/credentials" xmlns:st="jelly:stapler">
 
     <j:set var="readOnlyMode" value="${it.configReadOnly}"/>
 
@@ -113,5 +113,16 @@
         <f:repeatableProperty field="templates" header="Template"
                               add="Add Template" noAddButton="${readOnlyMode}"/>
     </f:entry>
+
+    <!-- Copy Template: duplicates an existing template's on-form values into a new row (Name left
+         blank). Hidden in read-only mode, alongside the Add/Delete buttons. The JS relocates this
+         control next to the core-generated "Add Template" button and reveals it. -->
+    <j:if test="${!readOnlyMode}">
+        <span class="proxmox-copy-template-control" style="display:none; position:relative;">
+            <button type="button" class="jenkins-button proxmox-copy-template-button"
+                    disabled="disabled">Copy Template</button>
+        </span>
+        <st:adjunct includes="org.jenkinsci.plugins.proxmox.ProxmoxCloud.copy-template"/>
+    </j:if>
 
 </j:jelly>

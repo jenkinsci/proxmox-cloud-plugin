@@ -11,8 +11,10 @@ import hudson.model.Node;
 import hudson.slaves.Cloud;
 import hudson.slaves.OfflineCause;
 import hudson.util.Secret;
+import org.htmlunit.html.HtmlPage;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
+import org.jenkinsci.plugins.proxmox.config.ProxmoxCloudConfigSync;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
 import org.junit.After;
 import org.junit.Before;
@@ -237,6 +239,43 @@ public class ProxmoxCloudTest {
         bad.setInstanceCap(2);
         bad.setInstanceMin(3);
         ProxmoxCloud.validateTemplateMinimums(List.of(bad));
+    }
+
+    // --- Copy Template control rendering (issue #25) ---
+
+    @Test
+    public void copyTemplateControlRenderedWhenEditable() throws Exception {
+        ProxmoxCloud cloud = createTestCloud();
+        j.jenkins.clouds.add(cloud);
+        assertFalse("precondition: a manually-configured cloud is not read-only", cloud.isConfigReadOnly());
+
+        JenkinsRule.WebClient wc = j.createWebClient();
+        wc.getOptions().setJavaScriptEnabled(false);
+        HtmlPage page = wc.goTo(cloud.getUrl() + "configure");
+        String html = page.getWebResponse().getContentAsString();
+
+        assertTrue("Copy Template button should render for an editable cloud",
+                html.contains("proxmox-copy-template-button"));
+        assertTrue("copy-template adjunct should be loaded for an editable cloud",
+                html.contains("copy-template"));
+    }
+
+    @Test
+    public void copyTemplateControlHiddenInReadOnlyMode() throws Exception {
+        ProxmoxCloud cloud = createTestCloud();
+        cloud.setConfigManaged(true);
+        j.jenkins.clouds.add(cloud);
+        ProxmoxCloudConfigSync.get().setAllowManualChanges(false);
+        assertTrue("precondition: config-managed cloud with manual changes disabled is read-only",
+                cloud.isConfigReadOnly());
+
+        JenkinsRule.WebClient wc = j.createWebClient();
+        wc.getOptions().setJavaScriptEnabled(false);
+        HtmlPage page = wc.goTo(cloud.getUrl() + "configure");
+        String html = page.getWebResponse().getContentAsString();
+
+        assertFalse("Copy Template control must not render in read-only mode",
+                html.contains("proxmox-copy-template-button"));
     }
 
     private static void setOfflineCauseTimestamp(OfflineCause cause, long timestampMs) throws Exception {
