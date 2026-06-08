@@ -242,9 +242,13 @@ public class ProxmoxConfigLoader {
         if (configMap.containsKey("jvmOptions")) {
             template.setJvmOptions(getStr(configMap, "jvmOptions", null));
         }
-        if (configMap.containsKey("javaVersion")) {
-            template.setJavaVersion(parseEnum(JavaInstallation.class,
-                    getStr(configMap, "javaVersion", null), "javaVersion"));
+        if (configMap.containsKey("javaDistribution")) {
+            template.setJavaDistribution(parseEnum(JavaDistribution.class,
+                    getStr(configMap, "javaDistribution", null), "javaDistribution"));
+        }
+        if (configMap.containsKey("javaMajorVersion")) {
+            template.setJavaMajorVersion(getInt(configMap, "javaMajorVersion",
+                    JavaDistribution.RECOMMENDED_MIN_MAJOR_VERSION));
         }
         if (configMap.containsKey("idleTerminationMinutes")) {
             template.setIdleTerminationMinutes(getInt(configMap, "idleTerminationMinutes", 30));

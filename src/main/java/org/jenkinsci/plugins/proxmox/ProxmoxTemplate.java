@@ -13,6 +13,7 @@ import hudson.model.Node;
 import hudson.model.TaskListener;
 import hudson.model.labels.LabelAtom;
 import hudson.security.ACL;
+import hudson.util.ComboBoxModel;
 import hudson.util.FormValidation;
 import hudson.util.ListBoxModel;
 import jenkins.model.Jenkins;
@@ -25,7 +26,7 @@ import org.jenkinsci.plugins.proxmox.api.model.StoragePool;
 import org.jenkinsci.plugins.proxmox.api.model.VirtualMachine;
 import org.jenkinsci.plugins.proxmox.api.model.VmConfig;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
-import org.jenkinsci.plugins.proxmox.config.JavaInstallation;
+import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentials;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
@@ -63,7 +64,8 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     private String credentialsId;
     private String javaPath = "java";
     private String jvmOptions;
-    private JavaInstallation javaVersion = JavaInstallation.NONE;
+    private JavaDistribution javaDistribution = JavaDistribution.NONE;
+    private int javaMajorVersion = JavaDistribution.RECOMMENDED_MIN_MAJOR_VERSION;
     private int idleTerminationMinutes = 30;
     private int instanceCap;
     private int instanceMin;
@@ -140,7 +142,8 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
 
         String staticIp = parseStaticIp(ipConfig);
         ProxmoxLauncher launcher = new ProxmoxLauncher(
-                credentialsId, javaPath, jvmOptions, startupWaitSeconds, staticIp, javaVersion);
+                credentialsId, javaPath, jvmOptions, startupWaitSeconds, staticIp,
+                javaDistribution, javaMajorVersion);
 
         // Use getRemoteFs() rather than the raw field: a blank Remote FS Root is stored as null
         // (see setRemoteFs), and an agent with a null remoteFS NPEs in
@@ -269,7 +272,8 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public String getCredentialsId() { return credentialsId; }
     public String getJavaPath() { return javaPath; }
     public String getJvmOptions() { return jvmOptions; }
-    public JavaInstallation getJavaVersion() { return javaVersion; }
+    public JavaDistribution getJavaDistribution() { return javaDistribution; }
+    public int getJavaMajorVersion() { return javaMajorVersion; }
     public int getIdleTerminationMinutes() { return idleTerminationMinutes; }
     public int getInstanceCap() { return instanceCap; }
     public int getInstanceMin() { return instanceMin; }
@@ -303,7 +307,13 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     @DataBoundSetter public void setCredentialsId(String v) { this.credentialsId = v; }
     @DataBoundSetter public void setJavaPath(String v) { this.javaPath = v; }
     @DataBoundSetter public void setJvmOptions(String v) { this.jvmOptions = v; }
-    @DataBoundSetter public void setJavaVersion(JavaInstallation v) { this.javaVersion = v != null ? v : JavaInstallation.NONE; }
+    @DataBoundSetter public void setJavaDistribution(JavaDistribution v) {
+        this.javaDistribution = v != null ? v : JavaDistribution.NONE;
+    }
+    @DataBoundSetter public void setJavaMajorVersion(int v) {
+        if (v < 0) throw new IllegalArgumentException("Java major version must be non-negative");
+        this.javaMajorVersion = v;
+    }
     @DataBoundSetter public void setIdleTerminationMinutes(int v) {
         if (v < 0) throw new IllegalArgumentException("Idle termination minutes must be non-negative");
         this.idleTerminationMinutes = v;
@@ -364,6 +374,15 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                 throw new FormException("Instance minimum (" + template.getInstanceMin()
                         + ") cannot exceed the instance cap (" + template.getInstanceCap() + ")",
                         "instanceMin");
+            }
+            // doCheckJavaMajorVersion only validates client-side, which does not block submission.
+            // A version below the recommended minimum is allowed (it only warns); reject just the
+            // unusable case of a non-positive version when a distribution is selected, which would
+            // otherwise build a nonsensical package name (e.g. openjdk-0-jre-headless).
+            if (template != null && template.getJavaDistribution() != JavaDistribution.NONE
+                    && template.getJavaMajorVersion() < 1) {
+                throw new FormException("Java major version must be set (1 or greater) "
+                        + "when a Java distribution is selected", "javaMajorVersion");
             }
             return template;
         }
@@ -545,6 +564,37 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             }
             if (instanceCap > 0 && value > instanceCap) {
                 return FormValidation.error("Instance minimum cannot exceed the instance cap (" + instanceCap + ")");
+            }
+            return FormValidation.ok();
+        }
+
+        public ComboBoxModel doFillJavaMajorVersionItems() {
+            return new ComboBoxModel("21", "25");
+        }
+
+        public FormValidation doCheckJavaMajorVersion(@QueryParameter String value,
+                                                      @QueryParameter String javaDistribution) {
+            // The version is only used when a distribution is selected (see ProxmoxLauncher).
+            if (javaDistribution == null || javaDistribution.isBlank()
+                    || JavaDistribution.NONE.name().equals(javaDistribution)) {
+                return FormValidation.ok();
+            }
+            if (value == null || value.isBlank()) {
+                return FormValidation.error("Java major version is required when a distribution is selected");
+            }
+            int parsed;
+            try {
+                parsed = Integer.parseInt(value.trim());
+            } catch (NumberFormatException e) {
+                return FormValidation.error("Java major version must be a whole number");
+            }
+            if (parsed < 1) {
+                return FormValidation.error("Java major version must be a positive version number");
+            }
+            if (parsed < JavaDistribution.RECOMMENDED_MIN_MAJOR_VERSION) {
+                return FormValidation.warning("Java " + parsed + " is older than the recommended minimum ("
+                        + JavaDistribution.RECOMMENDED_MIN_MAJOR_VERSION
+                        + "); make sure the package is available in the agent's apt repositories");
             }
             return FormValidation.ok();
         }

@@ -252,8 +252,9 @@ Under **Advanced → Agent Settings**:
 | Field | Value | Description |
 |---|---|---|
 | Remote FS Root | `/home/ubuntu/agent` | Must be writable by SSH user. Blank defaults to `/home/<user>/agent` |
-| Java Version | OpenJDK 21 | Auto-installs Java if not present |
-| Java Path | `java` | Path to the java binary, used only when Java Version is None |
+| Java Distribution | None | Auto-installs Java if not present: None, OpenJDK, or Amazon Corretto |
+| Java Major Version | `21` | Major version to install (e.g. 21, 25), editable; ignored when distribution is None |
+| Java Path | `java` | Path to the java binary, used only when Java Distribution is None |
 | JVM Options | *(blank)* | Extra options for the agent JVM, e.g. `-Xmx512m` |
 
 Under **Advanced → Cloud-Init**:
@@ -360,24 +361,24 @@ reserves the lowest free ID at or above this floor for each clone.
 
 ## Java auto-installation
 
-The plugin can automatically install a JRE on provisioned agents, eliminating the need to bake Java into your template image. Supported options:
+The plugin can automatically install a JRE on provisioned agents, eliminating the need to bake Java into your template image. Pick a **Java Distribution** and a **Java Major Version**:
 
-| Option | Package |
+| Distribution | Package installed |
 |---|---|
-| OpenJDK 21 | `openjdk-21-jre-headless` |
-| OpenJDK 25 | `openjdk-25-jre-headless` |
-| Amazon Corretto 21 | `java-21-amazon-corretto-jdk` |
-| Amazon Corretto 25 | `java-25-amazon-corretto-jdk` |
+| OpenJDK | `openjdk-<version>-jre-headless` |
+| Amazon Corretto | `java-<version>-amazon-corretto-jdk` |
+
+The major version is an editable combobox: the dropdown suggests common versions (21, 25), but you can type any version. 21 or newer is recommended; older versions are allowed but flagged with a warning. The package name is built from the distribution and version, so new releases work without a plugin update, as long as the package exists in the agent image's apt repositories. OpenJDK is installed from the distro's own repositories; Corretto from Amazon's apt repository. A version that is not available there fails the install with an apt error in the agent launch log.
 
 The install process:
 1. Waits for cloud-init to finish (avoids apt lock conflicts)
 2. Cleans apt cache to free disk space
-3. Installs the selected JRE (adding the Corretto apt repository first, for the Corretto options)
+3. Installs the selected JRE (adding the Corretto apt repository first, for Corretto)
 4. Removes unneeded packages and cleans up
 
 Requirements: the SSH user must have passwordless `sudo` access (default for Ubuntu cloud images).
 
-When Java Version is **None**, no install runs and the agent uses the `Java Path` you configure (or
+When Java Distribution is **None**, no install runs and the agent uses the `Java Path` you configure (or
 auto-detects `java` on the PATH if left at the default).
 
 ## Manual provisioning
@@ -443,7 +444,8 @@ agentDefaults:
   remoteFs: "/home/ubuntu/agent"
   ciUser: "ubuntu"
   ipConfig: "ip=dhcp"
-  javaVersion: OPENJDK_21               # NONE, OPENJDK_21/25, CORRETTO_21/25
+  javaDistribution: OPENJDK             # NONE, OPENJDK, or CORRETTO
+  javaMajorVersion: 21                  # major version to install (21+ recommended)
   jvmOptions: "-Xmx512m"
   idleTerminationMinutes: 30
   startupWaitSeconds: 120
@@ -487,7 +489,7 @@ Recognised cloud keys: `name`, `apiUrl`, `credentialsId`, `ignoreSslErrors`, `in
 
 Recognised agent keys: `node`, `name`, `templateVmId`, `labelString`, `numExecutors`,
 `cloneStrategy`, `targetStorage`, `targetPool`, `cores`, `memoryMb`, `diskSizeGb`, `remoteFs`,
-`mode`, `credentialsId`, `javaVersion`, `javaPath`, `jvmOptions`, `idleTerminationMinutes`,
+`mode`, `credentialsId`, `javaDistribution`, `javaMajorVersion`, `javaPath`, `jvmOptions`, `idleTerminationMinutes`,
 `instanceCap`, `instanceMin`, `maxTotalUses`, `namePrefix`, `startupWaitSeconds`, `ciUser`,
 `ipConfig`, `nameserver`, `searchDomain`.
 

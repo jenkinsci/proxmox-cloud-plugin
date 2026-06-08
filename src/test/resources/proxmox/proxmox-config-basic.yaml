@@ -16,7 +16,8 @@ agentDefaults:
   remoteFs: "/home/ubuntu/agent"
   mode: EXCLUSIVE
   credentialsId: "ssh-key"
-  javaVersion: OPENJDK_21
+  javaDistribution: OPENJDK
+  javaMajorVersion: 21
   idleTerminationMinutes: 30
   namePrefix: "jenkins-agent-"
   ciUser: "ubuntu"

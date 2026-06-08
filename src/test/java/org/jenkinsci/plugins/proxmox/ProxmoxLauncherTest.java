@@ -1,7 +1,7 @@
 package org.jenkinsci.plugins.proxmox;
 
 import hudson.plugins.sshslaves.SSHLauncher;
-import org.jenkinsci.plugins.proxmox.config.JavaInstallation;
+import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -14,8 +14,8 @@ import static org.junit.Assert.assertEquals;
  */
 public class ProxmoxLauncherTest {
 
-    private static ProxmoxLauncher launcher(String javaPath, String jvmOptions, JavaInstallation java) {
-        return new ProxmoxLauncher("ssh-cred", javaPath, jvmOptions, 60, null, java);
+    private static ProxmoxLauncher launcher(String javaPath, String jvmOptions, JavaDistribution dist) {
+        return new ProxmoxLauncher("ssh-cred", javaPath, jvmOptions, 60, null, dist, 21);
     }
 
     private static SSHLauncher delegate() {
@@ -25,14 +25,14 @@ public class ProxmoxLauncherTest {
     @Test
     public void jvmOptionsAreForwarded() {
         SSHLauncher d = delegate();
-        launcher("java", "-Xmx512m -Dfoo=bar", JavaInstallation.NONE).configureDelegate(d);
+        launcher("java", "-Xmx512m -Dfoo=bar", JavaDistribution.NONE).configureDelegate(d);
         assertEquals("-Xmx512m -Dfoo=bar", d.getJvmOptions());
     }
 
     @Test
     public void blankJvmOptionsAreNotForwarded() {
         SSHLauncher d = delegate();
-        launcher("java", "   ", JavaInstallation.NONE).configureDelegate(d);
+        launcher("java", "   ", JavaDistribution.NONE).configureDelegate(d);
         assertEquals("", d.getJvmOptions()); // SSHLauncher default when unset
     }
 
@@ -40,7 +40,7 @@ public class ProxmoxLauncherTest {
     public void jvmOptionsForwardedEvenWhenJdkAutoInstalled() {
         // JVM options configure the remoting JVM regardless of how java got onto the agent.
         SSHLauncher d = delegate();
-        launcher("java", "-Xmx1g", JavaInstallation.OPENJDK_21).configureDelegate(d);
+        launcher("java", "-Xmx1g", JavaDistribution.OPENJDK).configureDelegate(d);
         assertEquals("-Xmx1g", d.getJvmOptions());
     }
 
@@ -48,7 +48,7 @@ public class ProxmoxLauncherTest {
     @SuppressWarnings("deprecation") // getJavaPath() is deprecated but is the only read accessor
     public void customJavaPathForwardedWhenJdkNotAutoInstalled() {
         SSHLauncher d = delegate();
-        launcher("/opt/jdk/bin/java", "", JavaInstallation.NONE).configureDelegate(d);
+        launcher("/opt/jdk/bin/java", "", JavaDistribution.NONE).configureDelegate(d);
         assertEquals("/opt/jdk/bin/java", d.getJavaPath());
     }
 
@@ -58,17 +58,17 @@ public class ProxmoxLauncherTest {
         // The constructor normalises blank -> "java"; the default "java" must NOT pin the delegate,
         // so SSHLauncher keeps its own (richer) java auto-detection instead of "java" on the PATH.
         SSHLauncher d = delegate();
-        launcher("java", "", JavaInstallation.NONE).configureDelegate(d);
+        launcher("java", "", JavaDistribution.NONE).configureDelegate(d);
         assertEquals("", d.getJavaPath());
     }
 
     @Test
     @SuppressWarnings("deprecation")
     public void customJavaPathIgnoredWhenJdkAutoInstalled() {
-        // Java Path applies only when Java Version is NONE (per the field help): an auto-installed
+        // Java Path applies only when Java Distribution is NONE (per the field help): an auto-installed
         // JDK lands on the PATH, so a custom path must not override the freshly installed java.
         SSHLauncher d = delegate();
-        launcher("/opt/jdk/bin/java", "", JavaInstallation.OPENJDK_21).configureDelegate(d);
+        launcher("/opt/jdk/bin/java", "", JavaDistribution.OPENJDK).configureDelegate(d);
         assertEquals("", d.getJavaPath());
     }
 }

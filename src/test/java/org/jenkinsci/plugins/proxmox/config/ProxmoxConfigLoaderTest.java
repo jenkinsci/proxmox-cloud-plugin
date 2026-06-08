@@ -79,7 +79,8 @@ public class ProxmoxConfigLoaderTest {
         assertEquals("/home/ubuntu/agent", linuxBuilder.get("remoteFs"));
         assertEquals("ssh-key", linuxBuilder.get("credentialsId"));
         assertEquals("ubuntu", linuxBuilder.get("ciUser"));
-        assertEquals("OPENJDK_21", linuxBuilder.get("javaVersion"));
+        assertEquals("OPENJDK", linuxBuilder.get("javaDistribution"));
+        assertEquals(21, linuxBuilder.get("javaMajorVersion"));
 
         // From agentDefaults-pve1
         assertEquals("local-lvm", linuxBuilder.get("targetStorage"));
@@ -250,7 +251,8 @@ public class ProxmoxConfigLoaderTest {
         config.put("credentialsId", "ssh-key");
         config.put("javaPath", "/usr/bin/java");
         config.put("jvmOptions", "-Xmx512m");
-        config.put("javaVersion", "OPENJDK_21");
+        config.put("javaDistribution", "OPENJDK");
+        config.put("javaMajorVersion", 25);
         config.put("idleTerminationMinutes", 60);
         config.put("instanceCap", 5);
         config.put("maxTotalUses", 100);
@@ -280,7 +282,8 @@ public class ProxmoxConfigLoaderTest {
         assertEquals("ssh-key", template.getCredentialsId());
         assertEquals("/usr/bin/java", template.getJavaPath());
         assertEquals("-Xmx512m", template.getJvmOptions());
-        assertEquals(JavaInstallation.OPENJDK_21, template.getJavaVersion());
+        assertEquals(JavaDistribution.OPENJDK, template.getJavaDistribution());
+        assertEquals(25, template.getJavaMajorVersion());
         assertEquals(60, template.getIdleTerminationMinutes());
         assertEquals(5, template.getInstanceCap());
         assertEquals(100, template.getMaxTotalUses());
@@ -341,7 +344,8 @@ public class ProxmoxConfigLoaderTest {
         assertEquals("/home/ubuntu/agent", template.getRemoteFs());
         assertEquals(Node.Mode.EXCLUSIVE, template.getMode());
         assertEquals("java", template.getJavaPath());
-        assertEquals(JavaInstallation.NONE, template.getJavaVersion());
+        assertEquals(JavaDistribution.NONE, template.getJavaDistribution());
+        assertEquals(21, template.getJavaMajorVersion());
         assertEquals(30, template.getIdleTerminationMinutes());
         assertEquals(0, template.getInstanceCap());
         assertEquals(0, template.getMaxTotalUses());
@@ -359,13 +363,13 @@ public class ProxmoxConfigLoaderTest {
         config.put("numExecutors", 1);
         config.put("cloneStrategy", "LINKED");
         config.put("mode", "NORMAL");
-        config.put("javaVersion", "OPENJDK_21");
+        config.put("javaDistribution", "OPENJDK");
 
         ProxmoxTemplate template = loader.createProxmoxTemplate(config);
 
         assertEquals(CloneStrategy.LINKED, template.getCloneStrategy());
         assertEquals(Node.Mode.NORMAL, template.getMode());
-        assertEquals(JavaInstallation.OPENJDK_21, template.getJavaVersion());
+        assertEquals(JavaDistribution.OPENJDK, template.getJavaDistribution());
     }
 
     @Test
@@ -420,7 +424,8 @@ public class ProxmoxConfigLoaderTest {
         assertEquals(8, linuxBuilder.getCores());
         assertEquals(16384, linuxBuilder.getMemory());
         assertEquals("local-lvm", linuxBuilder.getTargetStorage());
-        assertEquals(JavaInstallation.OPENJDK_21, linuxBuilder.getJavaVersion());
+        assertEquals(JavaDistribution.OPENJDK, linuxBuilder.getJavaDistribution());
+        assertEquals(21, linuxBuilder.getJavaMajorVersion());
     }
 
     // ---- persistJenkinsChanges tests ----

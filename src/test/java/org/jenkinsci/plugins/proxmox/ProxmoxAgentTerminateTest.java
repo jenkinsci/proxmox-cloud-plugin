@@ -7,7 +7,7 @@ import com.github.tomakehurst.wiremock.client.WireMock;
 import hudson.model.Node;
 import hudson.model.TaskListener;
 import hudson.util.Secret;
-import org.jenkinsci.plugins.proxmox.config.JavaInstallation;
+import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
 import org.junit.After;
 import org.junit.Before;
@@ -52,7 +52,7 @@ public class ProxmoxAgentTerminateTest {
     }
 
     private ProxmoxAgent newAgent(int vmId) throws Exception {
-        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaInstallation.NONE);
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 0);
         return new ProxmoxAgent("jenkins-agent-" + vmId, "/home/jenkins", 1, Node.Mode.NORMAL, "linux",
                 launcher, "test-cloud", "test-template", "pve1", vmId, 10, 0);
     }

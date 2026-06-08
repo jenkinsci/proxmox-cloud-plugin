@@ -1,0 +1,10 @@
+<div>
+    Java major version to install, for example <code>21</code> or <code>25</code>. 21 or newer is
+    recommended; older versions are allowed but flagged with a warning. The field is editable: the
+    dropdown lists common versions, but you can type any version your agent image's apt repositories
+    provide, so new releases work without a plugin update. The package
+    installed is <code>openjdk-&lt;version&gt;-jre-headless</code> (OpenJDK) or
+    <code>java-&lt;version&gt;-amazon-corretto-jdk</code> (Corretto). A version that is not available
+    in those repositories fails the install with an apt error in the agent launch log. Ignored when
+    Java Distribution is None.
+</div>

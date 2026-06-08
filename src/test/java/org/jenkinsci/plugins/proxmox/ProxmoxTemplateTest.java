@@ -2,8 +2,10 @@ package org.jenkinsci.plugins.proxmox;
 
 import hudson.model.Label;
 import hudson.model.Node;
+import hudson.util.ComboBoxModel;
 import hudson.util.FormValidation;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
+import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.JenkinsRule;
@@ -54,6 +56,8 @@ public class ProxmoxTemplateTest {
         assertEquals(CloneStrategy.FULL, template.getCloneStrategy());
         assertEquals("/home/ubuntu/agent", template.getRemoteFs());
         assertEquals("java", template.getJavaPath());
+        assertEquals(JavaDistribution.NONE, template.getJavaDistribution());
+        assertEquals(21, template.getJavaMajorVersion());
         assertEquals("jenkins-agent-", template.getNamePrefix());
         assertEquals(30, template.getIdleTerminationMinutes());
         assertEquals(60, template.getStartupWaitSeconds());
@@ -118,5 +122,61 @@ public class ProxmoxTemplateTest {
         assertNotNull(fs);
         assertFalse(fs.isBlank());
         assertEquals("/home/ubuntu/agent", fs);
+    }
+
+    @Test
+    public void javaDistributionSetterDefaultsNullToNone() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
+        template.setJavaDistribution(JavaDistribution.OPENJDK);
+        assertEquals(JavaDistribution.OPENJDK, template.getJavaDistribution());
+        template.setJavaDistribution(null);
+        assertEquals(JavaDistribution.NONE, template.getJavaDistribution());
+    }
+
+    @Test
+    public void javaMajorVersionSetterAccepts() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
+        template.setJavaMajorVersion(25);
+        assertEquals(25, template.getJavaMajorVersion());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void javaMajorVersionSetterRejectsNegative() {
+        new ProxmoxTemplate("test", "pve1", 100, "linux", 1).setJavaMajorVersion(-1);
+    }
+
+    @Test
+    public void doFillJavaMajorVersionItemsListsSuggestions() {
+        ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
+        ComboBoxModel items = d.doFillJavaMajorVersionItems();
+        assertTrue(items.contains("21"));
+        assertTrue(items.contains("25"));
+    }
+
+    @Test
+    public void doCheckJavaMajorVersionIgnoredWhenDistributionNone() {
+        ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
+        // The version is unused when no distribution is selected, so any value is accepted.
+        assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("", "NONE").kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("nonsense", "NONE").kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("17", "").kind);
+    }
+
+    @Test
+    public void doCheckJavaMajorVersionValidatesWhenDistributionSelected() {
+        ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
+        assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("21", "OPENJDK").kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("26", "CORRETTO").kind);
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckJavaMajorVersion("", "OPENJDK").kind);    // required
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckJavaMajorVersion("0", "OPENJDK").kind);   // not positive
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckJavaMajorVersion("abc", "OPENJDK").kind); // not a number
+    }
+
+    @Test
+    public void doCheckJavaMajorVersionWarnsButAllowsBelowRecommendedMinimum() {
+        // Java 17 is below the recommended minimum (21) but allowed: the user may have a reason.
+        ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
+        assertEquals(FormValidation.Kind.WARNING, d.doCheckJavaMajorVersion("17", "OPENJDK").kind);
+        assertEquals(FormValidation.Kind.WARNING, d.doCheckJavaMajorVersion("11", "CORRETTO").kind);
     }
 }

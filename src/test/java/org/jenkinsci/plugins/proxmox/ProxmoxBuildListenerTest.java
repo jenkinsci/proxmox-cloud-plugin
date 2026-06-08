@@ -2,7 +2,7 @@ package org.jenkinsci.plugins.proxmox;
 
 import hudson.model.Computer;
 import hudson.model.Node;
-import org.jenkinsci.plugins.proxmox.config.JavaInstallation;
+import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.JenkinsRule;
@@ -22,7 +22,7 @@ public class ProxmoxBuildListenerTest {
     public JenkinsRule j = new JenkinsRule();
 
     private ProxmoxAgent newAgent(String name, int vmId) throws Exception {
-        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaInstallation.NONE);
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 0);
         return new ProxmoxAgent(name, "/home/jenkins", 1, Node.Mode.NORMAL, "linux",
                 launcher, "test-cloud", "test-template", "pve1", vmId, 10, 0);
     }

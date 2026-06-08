@@ -1,7 +1,7 @@
 package org.jenkinsci.plugins.proxmox;
 
 import hudson.model.Node;
-import org.jenkinsci.plugins.proxmox.config.JavaInstallation;
+import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.RestartableJenkinsRule;
@@ -24,7 +24,7 @@ public class ProxmoxAgentRestartTest {
     @Test
     public void agentSurvivesRestart() {
         rr.then(r -> {
-            ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaInstallation.NONE);
+            ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 0);
             ProxmoxAgent agent = new ProxmoxAgent("restart-agent", "/home/jenkins", 1, Node.Mode.NORMAL,
                     "linux", launcher, "test-cloud", "test-template", "pve1", 307, 10, 0);
             agent.incrementUses();

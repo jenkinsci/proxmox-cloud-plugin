@@ -15,7 +15,7 @@ import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
 import org.jenkinsci.plugins.proxmox.api.model.NetworkInterface;
-import org.jenkinsci.plugins.proxmox.config.JavaInstallation;
+import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -40,18 +40,21 @@ public class ProxmoxLauncher extends ComputerLauncher {
     private final String jvmOptions;
     private final int startupWaitSeconds;
     private final String staticIp;
-    private final JavaInstallation javaVersion;
+    private final JavaDistribution javaDistribution;
+    private final int javaMajorVersion;
 
     private transient SSHLauncher delegate;
 
     public ProxmoxLauncher(String sshCredentialsId, String javaPath, String jvmOptions,
-                            int startupWaitSeconds, String staticIp, JavaInstallation javaVersion) {
+                            int startupWaitSeconds, String staticIp,
+                            JavaDistribution javaDistribution, int javaMajorVersion) {
         this.sshCredentialsId = sshCredentialsId;
         this.javaPath = javaPath != null && !javaPath.isBlank() ? javaPath : "java";
         this.jvmOptions = jvmOptions;
         this.startupWaitSeconds = startupWaitSeconds > 0 ? startupWaitSeconds : 60;
         this.staticIp = staticIp;
-        this.javaVersion = javaVersion != null ? javaVersion : JavaInstallation.NONE;
+        this.javaDistribution = javaDistribution != null ? javaDistribution : JavaDistribution.NONE;
+        this.javaMajorVersion = javaMajorVersion;
     }
 
     @Override
@@ -70,7 +73,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
 
         waitForSsh(host, log);
 
-        if (javaVersion != JavaInstallation.NONE) {
+        if (javaDistribution != JavaDistribution.NONE) {
             installJava(host, log);
         }
 
@@ -90,7 +93,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
         if (jvmOptions != null && !jvmOptions.isBlank()) {
             launcher.setJvmOptions(jvmOptions);
         }
-        if (javaVersion == JavaInstallation.NONE
+        if (javaDistribution == JavaDistribution.NONE
                 && javaPath != null && !javaPath.isBlank() && !"java".equals(javaPath)) {
             launcher.setJavaPath(javaPath);
         }
@@ -111,10 +114,11 @@ public class ProxmoxLauncher extends ComputerLauncher {
     }
 
     private void installJava(String host, PrintStream log) throws IOException, InterruptedException {
-        String installCmd = javaVersion.getInstallCommand();
+        String installCmd = javaDistribution.getInstallCommand(javaMajorVersion);
         if (installCmd == null) return;
 
-        log.println("[Proxmox] Installing " + javaVersion.getDisplayName() + "...");
+        log.println("[Proxmox] Installing " + javaDistribution.getDisplayName()
+                + " " + javaMajorVersion + "...");
 
         StandardUsernameCredentials creds = CredentialsMatchers.firstOrNull(
                 CredentialsProvider.lookupCredentialsInItemGroup(
@@ -143,7 +147,14 @@ public class ProxmoxLauncher extends ComputerLauncher {
                     + " [ -n \"$JAVA_BIN\" ] && sudo ln -sf \"$JAVA_BIN\" /usr/local/bin/java"
                     + " && java -version 2>&1; }";
             String output = execRemoteCommand(conn, verifyCmd, log, "Java verification");
-            log.println("[Proxmox] Java is available: " + output.lines().findFirst().orElse(""));
+            // Log the full `java -version` banner (3 lines). Amazon Corretto reports "openjdk
+            // version ..." on the first line like any OpenJDK build; its "Corretto-..." identity is
+            // on the Runtime Environment / VM lines, so printing only the first line is misleading.
+            log.println("[Proxmox] Java is available:");
+            output.lines()
+                    .map(String::strip)
+                    .filter(line -> !line.isEmpty())
+                    .forEach(line -> log.println("[Proxmox]   " + line));
         } finally {
             conn.close();
         }

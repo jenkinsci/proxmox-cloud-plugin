@@ -95,13 +95,18 @@
                 <f:textbox class="proxmox-remoteFs"/>
             </f:entry>
 
-            <f:entry title="Java Version" field="javaVersion"
+            <f:entry title="Java Distribution" field="javaDistribution"
                      description="Automatically install Java on the agent if not present">
                 <f:enum>${it.displayName}</f:enum>
             </f:entry>
 
+            <f:entry title="Java Major Version" field="javaMajorVersion"
+                     description="Major version to install (ignored when distribution is None)">
+                <f:combobox/>
+            </f:entry>
+
             <f:entry title="Java Path" field="javaPath"
-                     description="Path to java binary (only used if Java Version is 'None')">
+                     description="Path to java binary (only used if Java Distribution is 'None')">
                 <f:textbox default="java"/>
             </f:entry>
 
