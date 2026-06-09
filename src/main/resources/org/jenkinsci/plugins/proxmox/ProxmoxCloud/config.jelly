@@ -7,8 +7,7 @@
         <j:choose>
             <j:when test="${it.configManaged}">
                 <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:4px;">
-                    <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.85em; font-weight:600;
-                                 background:var(--alert-success-bg-color); color:var(--alert-success-text-color); border:1px solid var(--alert-success-text-color);">
+                    <span class="jenkins-alert jenkins-alert-success" style="padding:4px 12px;">
                         Config Managed
                     </span>
                     <j:if test="${it.lastUpdateDisplay != ''}">
@@ -18,8 +17,7 @@
                     </j:if>
                 </div>
                 <j:if test="${it.manuallyModified}">
-                    <div style="margin-top:4px; padding:4px 8px; border-radius:4px; font-size:0.85em;
-                                background:var(--alert-warning-bg-color); color:var(--alert-warning-text-color); border:1px solid var(--alert-warning-text-color);">
+                    <div style="margin-top:4px; color:var(--text-color-secondary); font-size:0.85em;">
                         Manually modified at ${it.manualModificationDisplay}.
                         Changes will be overwritten on next sync.
                     </div>
@@ -32,8 +30,7 @@
             </j:when>
             <j:otherwise>
                 <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:4px;">
-                    <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.85em; font-weight:600;
-                                 background:var(--alert-info-bg-color); color:var(--alert-info-text-color); border:1px solid var(--alert-info-text-color);">
+                    <span class="jenkins-alert jenkins-alert-info" style="padding:4px 12px;">
                         Manually Configured
                     </span>
                     <j:if test="${it.lastUpdateDisplay != ''}">
