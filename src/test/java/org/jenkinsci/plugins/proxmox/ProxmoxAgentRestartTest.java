@@ -2,13 +2,13 @@ package org.jenkinsci.plugins.proxmox;
 
 import hudson.model.Node;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
-import org.junit.Rule;
-import org.junit.Test;
-import org.jvnet.hudson.test.RestartableJenkinsRule;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.jvnet.hudson.test.junit.jupiter.JenkinsSessionExtension;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Verifies a {@link ProxmoxAgent} survives a Jenkins restart (issue #2). Before the fix the agent
@@ -16,14 +16,14 @@ import static org.junit.Assert.assertTrue;
  * resume. The agent is reloaded from {@code $JENKINS_HOME/nodes/<name>/config.xml} with its
  * identity and use-count intact.
  */
-public class ProxmoxAgentRestartTest {
+class ProxmoxAgentRestartTest {
 
-    @Rule
-    public RestartableJenkinsRule rr = new RestartableJenkinsRule();
+    @RegisterExtension
+    static JenkinsSessionExtension session = new JenkinsSessionExtension();
 
     @Test
-    public void agentSurvivesRestart() {
-        rr.then(r -> {
+    void agentSurvivesRestart() throws Throwable {
+        session.then(r -> {
             ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 0);
             ProxmoxAgent agent = new ProxmoxAgent("restart-agent", "/home/jenkins", 1, Node.Mode.NORMAL,
                     "linux", launcher, "test-cloud", "test-template", "pve1", 307, 10, 0);
@@ -33,9 +33,9 @@ public class ProxmoxAgentRestartTest {
             assertNotNull(r.jenkins.getNode("restart-agent"));
         });
 
-        rr.then(r -> {
+        session.then(r -> {
             Node node = r.jenkins.getNode("restart-agent");
-            assertNotNull("agent should survive restart (no longer EphemeralNode)", node);
+            assertNotNull(node, "agent should survive restart (no longer EphemeralNode)");
             assertTrue(node instanceof ProxmoxAgent);
             ProxmoxAgent agent = (ProxmoxAgent) node;
             assertEquals(307, agent.getVmId());

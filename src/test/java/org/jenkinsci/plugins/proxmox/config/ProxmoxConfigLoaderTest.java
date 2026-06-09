@@ -5,10 +5,10 @@ import hudson.slaves.Cloud;
 import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.proxmox.ProxmoxCloud;
 import org.jenkinsci.plugins.proxmox.ProxmoxTemplate;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 import org.yaml.snakeyaml.Yaml;
 
 import java.io.InputStream;
@@ -17,31 +17,32 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class ProxmoxConfigLoaderTest {
+@WithJenkins
+class ProxmoxConfigLoaderTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
 
     private ProxmoxConfigLoader loader;
 
-    @Before
-    public void setUp() {
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
         loader = new ProxmoxConfigLoader();
     }
 
     private Map<String, Object> loadYaml(String classpathPath) {
         Yaml yaml = new Yaml();
         InputStream is = getClass().getClassLoader().getResourceAsStream(classpathPath);
-        assertNotNull("Test resource not found: " + classpathPath, is);
+        assertNotNull(is, "Test resource not found: " + classpathPath);
         return yaml.load(is);
     }
 
     // ---- createConfigFromYaml tests ----
 
     @Test
-    public void createConfigFromYaml_mergesCloudDefaults() {
+    void createConfigFromYaml_mergesCloudDefaults() {
         Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
         List<String> warnings = new ArrayList<>();
 
@@ -59,7 +60,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void createConfigFromYaml_agentThreeLevelInheritance() {
+    void createConfigFromYaml_agentThreeLevelInheritance() {
         Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
         List<String> warnings = new ArrayList<>();
 
@@ -98,7 +99,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void createConfigFromYaml_agentOverridesNodeDefaults() {
+    void createConfigFromYaml_agentOverridesNodeDefaults() {
         Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
         List<String> warnings = new ArrayList<>();
 
@@ -119,7 +120,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void createConfigFromYaml_agentLinkedToMultipleClouds() {
+    void createConfigFromYaml_agentLinkedToMultipleClouds() {
         Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-multi-cloud.yaml");
         List<String> warnings = new ArrayList<>();
 
@@ -139,15 +140,15 @@ public class ProxmoxConfigLoaderTest {
         assertEquals(2, cloud2Agents.size());
     }
 
-    @Test(expected = IllegalArgumentException.class)
-    public void createConfigFromYaml_missingCloudIdThrows() {
+    @Test
+    void createConfigFromYaml_missingCloudIdThrows() {
         Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-invalid-cloudid.yaml");
         List<String> warnings = new ArrayList<>();
-        loader.createConfigFromYaml(yamlData, warnings);
+        assertThrows(IllegalArgumentException.class, () -> loader.createConfigFromYaml(yamlData, warnings));
     }
 
     @Test
-    public void createConfigFromYaml_missingNodeDefaultsWarns() {
+    void createConfigFromYaml_missingNodeDefaultsWarns() {
         Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-minimal.yaml");
         List<String> warnings = new ArrayList<>();
 
@@ -159,7 +160,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void createConfigFromYaml_nullDefaultSectionsUsesEmptyMap() {
+    void createConfigFromYaml_nullDefaultSectionsUsesEmptyMap() {
         Map<String, Object> yamlData = new LinkedHashMap<>();
         yamlData.put("cloudConfigurations", Map.of("c1", Map.of("name", "Cloud 1", "apiUrl", "https://x:8006")));
         yamlData.put("agentConfigurations", Map.of("a1",
@@ -180,7 +181,7 @@ public class ProxmoxConfigLoaderTest {
     // ---- createProxmoxCloud tests ----
 
     @Test
-    public void createProxmoxCloud_validConfig() {
+    void createProxmoxCloud_validConfig() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("name", "My Cloud");
         config.put("apiUrl", "https://proxmox.example.com:8006");
@@ -205,15 +206,15 @@ public class ProxmoxConfigLoaderTest {
         assertEquals(120, cloud.getOrphanCleanupGracePeriodSeconds());
     }
 
-    @Test(expected = IllegalArgumentException.class)
-    public void createProxmoxCloud_missingNameThrows() {
+    @Test
+    void createProxmoxCloud_missingNameThrows() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("apiUrl", "https://proxmox.example.com:8006");
-        loader.createProxmoxCloud(config);
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxCloud(config));
     }
 
     @Test
-    public void createProxmoxCloud_minimalConfig() {
+    void createProxmoxCloud_minimalConfig() {
         Map<String, Object> config = Map.of("name", "Minimal Cloud");
 
         ProxmoxCloud cloud = loader.createProxmoxCloud(config);
@@ -232,7 +233,7 @@ public class ProxmoxConfigLoaderTest {
     // ---- createProxmoxTemplate tests ----
 
     @Test
-    public void createProxmoxTemplate_validConfig() {
+    void createProxmoxTemplate_validConfig() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("name", "linux-builder");
         config.put("node", "pve1");
@@ -295,38 +296,38 @@ public class ProxmoxConfigLoaderTest {
         assertEquals("example.com", template.getSearchDomain());
     }
 
-    @Test(expected = IllegalArgumentException.class)
-    public void createProxmoxTemplate_missingNameThrows() {
+    @Test
+    void createProxmoxTemplate_missingNameThrows() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("node", "pve1");
         config.put("templateVmId", 9000);
         config.put("labelString", "linux");
         config.put("numExecutors", 1);
-        loader.createProxmoxTemplate(config);
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void createProxmoxTemplate_missingNodeThrows() {
-        Map<String, Object> config = new LinkedHashMap<>();
-        config.put("name", "test");
-        config.put("templateVmId", 9000);
-        config.put("labelString", "linux");
-        config.put("numExecutors", 1);
-        loader.createProxmoxTemplate(config);
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void createProxmoxTemplate_missingTemplateVmIdThrows() {
-        Map<String, Object> config = new LinkedHashMap<>();
-        config.put("name", "test");
-        config.put("node", "pve1");
-        config.put("labelString", "linux");
-        config.put("numExecutors", 1);
-        loader.createProxmoxTemplate(config);
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(config));
     }
 
     @Test
-    public void createProxmoxTemplate_onlyRequiredFields() {
+    void createProxmoxTemplate_missingNodeThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "test");
+        config.put("templateVmId", 9000);
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(config));
+    }
+
+    @Test
+    void createProxmoxTemplate_missingTemplateVmIdThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "test");
+        config.put("node", "pve1");
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(config));
+    }
+
+    @Test
+    void createProxmoxTemplate_onlyRequiredFields() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("name", "basic");
         config.put("node", "pve1");
@@ -354,7 +355,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void createProxmoxTemplate_enumParsing() {
+    void createProxmoxTemplate_enumParsing() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("name", "test");
         config.put("node", "pve1");
@@ -373,7 +374,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void createProxmoxTemplate_invalidEnumThrows() {
+    void createProxmoxTemplate_invalidEnumThrows() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("name", "test");
         config.put("node", "pve1");
@@ -396,7 +397,7 @@ public class ProxmoxConfigLoaderTest {
     // ---- convertYamlToObjects tests ----
 
     @Test
-    public void convertYamlToObjects_fullIntegration() {
+    void convertYamlToObjects_fullIntegration() {
         Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
         List<String> warnings = new ArrayList<>();
         Map<String, Map<String, Object>> mergedConfig = loader.createConfigFromYaml(yamlData, warnings);
@@ -431,7 +432,7 @@ public class ProxmoxConfigLoaderTest {
     // ---- persistJenkinsChanges tests ----
 
     @Test
-    public void persistJenkinsChanges_addsNewClouds() throws Exception {
+    void persistJenkinsChanges_addsNewClouds() throws Exception {
         Jenkins jenkins = j.jenkins;
 
         ProxmoxCloud cloud = new ProxmoxCloud("New Cloud");
@@ -442,7 +443,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void persistJenkinsChanges_replacesExistingCloud() throws Exception {
+    void persistJenkinsChanges_replacesExistingCloud() throws Exception {
         Jenkins jenkins = j.jenkins;
         ProxmoxCloud existing = new ProxmoxCloud("Existing Cloud");
         jenkins.clouds.add(existing);
@@ -458,7 +459,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void persistJenkinsChanges_leavesUnrelatedClouds() throws Exception {
+    void persistJenkinsChanges_leavesUnrelatedClouds() throws Exception {
         Jenkins jenkins = j.jenkins;
         ProxmoxCloud unrelated = new ProxmoxCloud("Unrelated Cloud");
         jenkins.clouds.add(unrelated);
@@ -474,7 +475,7 @@ public class ProxmoxConfigLoaderTest {
     // ---- processYamlAndPersistConfig end-to-end ----
 
     @Test
-    public void processYamlAndPersistConfig_endToEnd() throws Exception {
+    void processYamlAndPersistConfig_endToEnd() throws Exception {
         Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-basic.yaml");
         Jenkins jenkins = j.jenkins;
 
@@ -493,7 +494,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void processYamlAndPersistConfig_allOrNothing() throws Exception {
+    void processYamlAndPersistConfig_allOrNothing() throws Exception {
         Map<String, Object> yamlData = loadYaml("proxmox/proxmox-config-no-name.yaml");
         Jenkins jenkins = j.jenkins;
 
@@ -507,7 +508,7 @@ public class ProxmoxConfigLoaderTest {
     // ---- combineConfig tests ----
 
     @Test
-    public void combineConfig_specificOverridesDefaults() {
+    void combineConfig_specificOverridesDefaults() {
         Map<String, Object> defaults = Map.of("a", 1, "b", 2);
         Map<String, Object> specific = Map.of("b", 99, "c", 3);
 
@@ -519,14 +520,14 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void combineConfig_nullDefaultsHandled() {
+    void combineConfig_nullDefaultsHandled() {
         Map<String, Object> specific = Map.of("a", 1);
         Map<String, Object> result = loader.combineConfig(null, specific);
         assertEquals(1, result.get("a"));
     }
 
     @Test
-    public void combineAgentConfig_threeLevelMerge() {
+    void combineAgentConfig_threeLevelMerge() {
         Map<String, Object> defaults = Map.of("a", 1, "b", 2, "c", 3);
         Map<String, Object> nodeDefaults = Map.of("b", 20, "d", 4);
         Map<String, Object> specific = new LinkedHashMap<>(Map.of("c", 30, "e", 5, "cloudIds", List.of("x")));
@@ -542,7 +543,7 @@ public class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    public void combineAgentConfig_nullNodeDefaultsHandled() {
+    void combineAgentConfig_nullNodeDefaultsHandled() {
         Map<String, Object> defaults = Map.of("a", 1);
         Map<String, Object> specific = new LinkedHashMap<>(Map.of("b", 2, "cloudIds", List.of("x")));
 

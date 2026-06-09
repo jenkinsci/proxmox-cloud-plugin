@@ -1,12 +1,12 @@
 package org.jenkinsci.plugins.proxmox;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class SshKeyUtilTest {
+class SshKeyUtilTest {
 
     private static final String RSA_PRIVATE_KEY = """
             -----BEGIN OPENSSH PRIVATE KEY-----
@@ -53,21 +53,21 @@ public class SshKeyUtilTest {
     private static final String ED25519_EXPECTED = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJiQf5ydwuBeKa7YlqqU88yLA2ViZQid2ERjYjo7yEk/";
 
     @Test
-    public void testDeriveRsaPublicKey() throws IOException {
+    void testDeriveRsaPublicKey() throws IOException {
         String publicKey = SshKeyUtil.deriveOpenSshPublicKey(RSA_PRIVATE_KEY, null);
         assertNotNull(publicKey);
-        assertTrue("Should start with ssh-rsa", publicKey.startsWith("ssh-rsa "));
-        assertTrue("Public key should match expected", publicKey.startsWith(RSA_EXPECTED_PREFIX));
+        assertTrue(publicKey.startsWith("ssh-rsa "), "Should start with ssh-rsa");
+        assertTrue(publicKey.startsWith(RSA_EXPECTED_PREFIX), "Public key should match expected");
     }
 
     @Test
-    public void testDeriveEd25519PublicKey() throws IOException {
+    void testDeriveEd25519PublicKey() throws IOException {
         String publicKey = SshKeyUtil.deriveOpenSshPublicKey(ED25519_PRIVATE_KEY, null);
         assertEquals(ED25519_EXPECTED, publicKey);
     }
 
-    @Test(expected = IOException.class)
-    public void testInvalidPemThrows() throws IOException {
-        SshKeyUtil.deriveOpenSshPublicKey("not a valid PEM key", null);
+    @Test
+    void testInvalidPemThrows() {
+        assertThrows(IOException.class, () -> SshKeyUtil.deriveOpenSshPublicKey("not a valid PEM key", null));
     }
 }

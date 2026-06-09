@@ -2,8 +2,7 @@ package org.jenkinsci.plugins.proxmox;
 
 import com.cloudbees.plugins.credentials.CredentialsScope;
 import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.client.WireMock;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Label;
@@ -21,12 +20,12 @@ import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxCloudConfigSync;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -34,29 +33,26 @@ import java.util.List;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class ProxmoxCloudTest {
+@WithJenkins
+class ProxmoxCloudTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .configureStaticDsl(true)
+            .build();
 
-    private WireMockServer wireMock;
+    private JenkinsRule j;
 
-    @Before
-    public void setUp() {
-        wireMock = new WireMockServer(wireMockConfig().dynamicPort());
-        wireMock.start();
-        WireMock.configureFor("localhost", wireMock.port());
-    }
-
-    @After
-    public void tearDown() {
-        wireMock.stop();
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
     }
 
     @Test
-    public void testCanProvisionMatchingLabel() {
+    void testCanProvisionMatchingLabel() {
         ProxmoxCloud cloud = createTestCloud();
         Cloud.CloudState state = new Cloud.CloudState(Label.get("linux"), 0);
 
@@ -64,7 +60,7 @@ public class ProxmoxCloudTest {
     }
 
     @Test
-    public void testCanProvisionNonMatchingLabel() {
+    void testCanProvisionNonMatchingLabel() {
         ProxmoxCloud cloud = createTestCloud();
         Cloud.CloudState state = new Cloud.CloudState(Label.get("windows"), 0);
 
@@ -72,7 +68,7 @@ public class ProxmoxCloudTest {
     }
 
     @Test
-    public void testCanProvisionNullLabelNormalMode() {
+    void testCanProvisionNullLabelNormalMode() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setMode(Node.Mode.NORMAL);
 
@@ -84,7 +80,7 @@ public class ProxmoxCloudTest {
     }
 
     @Test
-    public void testCanProvisionNullLabelExclusiveMode() {
+    void testCanProvisionNullLabelExclusiveMode() {
         ProxmoxCloud cloud = createTestCloud();
         Cloud.CloudState state = new Cloud.CloudState(null, 0);
 
@@ -92,7 +88,7 @@ public class ProxmoxCloudTest {
     }
 
     @Test
-    public void testInstanceCapPreventsProvisioning() {
+    void testInstanceCapPreventsProvisioning() {
         ProxmoxCloud cloud = createTestCloud();
         cloud.setInstanceCap(0);
 
@@ -104,7 +100,7 @@ public class ProxmoxCloudTest {
     }
 
     @Test
-    public void testEmptyTemplatesCantProvision() {
+    void testEmptyTemplatesCantProvision() {
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
         cloud.setTemplates(List.of());
 
@@ -113,45 +109,47 @@ public class ProxmoxCloudTest {
     }
 
     @Test
-    public void testOrphanCleanupGracePeriodDefault() {
+    void testOrphanCleanupGracePeriodDefault() {
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
         assertEquals(300, cloud.getOrphanCleanupGracePeriodSeconds());
     }
 
     @Test
-    public void testOrphanCleanupGracePeriodAccepted() {
+    void testOrphanCleanupGracePeriodAccepted() {
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
         cloud.setOrphanCleanupGracePeriodSeconds(30);
         assertEquals(30, cloud.getOrphanCleanupGracePeriodSeconds());
     }
 
-    @Test(expected = IllegalArgumentException.class)
-    public void testOrphanCleanupGracePeriodRejectsBelowOne() {
-        new ProxmoxCloud("test-cloud").setOrphanCleanupGracePeriodSeconds(0);
+    @Test
+    void testOrphanCleanupGracePeriodRejectsBelowOne() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new ProxmoxCloud("test-cloud").setOrphanCleanupGracePeriodSeconds(0));
     }
 
     @Test
-    public void testOrphanCleanupPeriodDefault() {
+    void testOrphanCleanupPeriodDefault() {
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
         assertEquals(600, cloud.getOrphanCleanupPeriodSeconds());
     }
 
     @Test
-    public void testOrphanCleanupPeriodAccepted() {
+    void testOrphanCleanupPeriodAccepted() {
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
         cloud.setOrphanCleanupPeriodSeconds(30); // the minimum allowed
         assertEquals(30, cloud.getOrphanCleanupPeriodSeconds());
     }
 
-    @Test(expected = IllegalArgumentException.class)
-    public void testOrphanCleanupPeriodRejectsBelowMinimum() {
-        new ProxmoxCloud("test-cloud").setOrphanCleanupPeriodSeconds(29);
+    @Test
+    void testOrphanCleanupPeriodRejectsBelowMinimum() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new ProxmoxCloud("test-cloud").setOrphanCleanupPeriodSeconds(29));
     }
 
     // --- concurrent, race-safe id reservation (issue #17) ---
 
     @Test
-    public void reserveVmIdReturnsDistinctIdsAndReleasesForReuse() throws Exception {
+    void reserveVmIdReturnsDistinctIdsAndReleasesForReuse() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock();
         cloud.setStartVmId(300);
         // Proxmox keeps returning 300 (the stub never "creates" a VM); the reserved set is what forces
@@ -162,7 +160,7 @@ public class ProxmoxCloudTest {
         int first = cloud.reserveVmId();
         int second = cloud.reserveVmId();
         assertEquals(300, first);
-        assertEquals("a second in-flight reservation must skip the already-reserved id", 301, second);
+        assertEquals(301, second, "a second in-flight reservation must skip the already-reserved id");
 
         // Once the first id is released, it is free to be chosen again.
         cloud.releaseVmId(first);
@@ -172,7 +170,7 @@ public class ProxmoxCloudTest {
     // --- cap accounting excludes offline-dead nodes (issues #16, #17) ---
 
     @Test
-    public void getRunningAgentCountExcludesOfflineDeadAgents() throws Exception {
+    void getRunningAgentCountExcludesOfflineDeadAgents() throws Exception {
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
         cloud.setOrphanCleanupGracePeriodSeconds(1); // 1s grace
 
@@ -190,22 +188,22 @@ public class ProxmoxCloudTest {
 
         // Just-disconnected (within the 1s grace) -> still counts as functional capacity.
         setOfflineCauseTimestamp(cause, System.currentTimeMillis());
-        assertEquals("a briefly-offline agent still counts toward the cap", 1, cloud.getRunningAgentCount());
+        assertEquals(1, cloud.getRunningAgentCount(), "a briefly-offline agent still counts toward the cap");
 
         // Offline well beyond grace -> excluded so it cannot block a working replacement.
         setOfflineCauseTimestamp(cause, System.currentTimeMillis() - 3_600_000L);
-        assertEquals("a long-dead offline agent must not hold a cap slot", 0, cloud.getRunningAgentCount());
+        assertEquals(0, cloud.getRunningAgentCount(), "a long-dead offline agent must not hold a cap slot");
     }
 
     // --- warm-pool minimum provisioning (issue #20) ---
 
     @Test
-    public void provisionForMinimumRespectsTemplateCapWithoutHittingApi() throws Exception {
+    void provisionForMinimumRespectsTemplateCapWithoutHittingApi() throws Exception {
         ProxmoxTemplate template = new ProxmoxTemplate("test-template", "pve1", 9000, "linux", 1);
         template.setInstanceCap(1);
         template.setInstanceMin(3);
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
-        cloud.setApiUrl("http://localhost:" + wireMock.port()); // any API call here would be unstubbed
+        cloud.setApiUrl("http://localhost:" + wireMock.getPort()); // any API call here would be unstubbed
         cloud.setTemplates(List.of(template));
 
         // One active agent of this template already equals the cap, so there is no headroom.
@@ -216,11 +214,11 @@ public class ProxmoxCloudTest {
     }
 
     @Test
-    public void minimumInstancesCheckNoOpsWhenNoMinimumConfigured() {
+    void minimumInstancesCheckNoOpsWhenNoMinimumConfigured() {
         ProxmoxTemplate template = new ProxmoxTemplate("test-template", "pve1", 9000, "linux", 1);
         // instanceMin defaults to 0 -> nothing to provision, so the check must do no API work.
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
-        cloud.setApiUrl("http://localhost:" + wireMock.port());
+        cloud.setApiUrl("http://localhost:" + wireMock.getPort());
         cloud.setTemplates(List.of(template));
         j.jenkins.clouds.add(cloud);
 
@@ -230,7 +228,7 @@ public class ProxmoxCloudTest {
     }
 
     @Test
-    public void validateTemplateMinimumsAcceptsMinWithinCapOrUnlimited() throws Exception {
+    void validateTemplateMinimumsAcceptsMinWithinCapOrUnlimited() throws Exception {
         ProxmoxTemplate withinCap = new ProxmoxTemplate("t", "pve1", 100, "linux", 1);
         withinCap.setInstanceCap(4);
         withinCap.setInstanceMin(4); // at the cap is allowed
@@ -239,53 +237,53 @@ public class ProxmoxCloudTest {
         ProxmoxCloud.validateTemplateMinimums(List.of(withinCap, unlimited)); // must not throw
     }
 
-    @Test(expected = Descriptor.FormException.class)
-    public void validateTemplateMinimumsRejectsMinAboveCap() throws Exception {
+    @Test
+    void validateTemplateMinimumsRejectsMinAboveCap() {
         ProxmoxTemplate bad = new ProxmoxTemplate("t", "pve1", 100, "linux", 1);
         bad.setInstanceCap(2);
         bad.setInstanceMin(3);
-        ProxmoxCloud.validateTemplateMinimums(List.of(bad));
+        assertThrows(Descriptor.FormException.class, () -> ProxmoxCloud.validateTemplateMinimums(List.of(bad)));
     }
 
     // --- Copy Template control rendering (issue #25) ---
 
     @Test
-    public void copyTemplateControlRenderedWhenEditable() throws Exception {
+    void copyTemplateControlRenderedWhenEditable() throws Exception {
         ProxmoxCloud cloud = createTestCloud();
         j.jenkins.clouds.add(cloud);
-        assertFalse("precondition: a manually-configured cloud is not read-only", cloud.isConfigReadOnly());
+        assertFalse(cloud.isConfigReadOnly(), "precondition: a manually-configured cloud is not read-only");
 
         JenkinsRule.WebClient wc = j.createWebClient();
         wc.getOptions().setJavaScriptEnabled(false);
         HtmlPage page = wc.goTo(cloud.getUrl() + "configure");
         String html = page.getWebResponse().getContentAsString();
 
-        assertTrue("Copy Template button should render for an editable cloud",
-                html.contains("proxmox-copy-template-button"));
-        assertTrue("copy-template adjunct should be loaded for an editable cloud",
-                html.contains("copy-template"));
+        assertTrue(html.contains("proxmox-copy-template-button"),
+                "Copy Template button should render for an editable cloud");
+        assertTrue(html.contains("copy-template"),
+                "copy-template adjunct should be loaded for an editable cloud");
     }
 
     @Test
-    public void copyTemplateControlHiddenInReadOnlyMode() throws Exception {
+    void copyTemplateControlHiddenInReadOnlyMode() throws Exception {
         ProxmoxCloud cloud = createTestCloud();
         cloud.setConfigManaged(true);
         j.jenkins.clouds.add(cloud);
         ProxmoxCloudConfigSync.get().setAllowManualChanges(false);
-        assertTrue("precondition: config-managed cloud with manual changes disabled is read-only",
-                cloud.isConfigReadOnly());
+        assertTrue(cloud.isConfigReadOnly(),
+                "precondition: config-managed cloud with manual changes disabled is read-only");
 
         JenkinsRule.WebClient wc = j.createWebClient();
         wc.getOptions().setJavaScriptEnabled(false);
         HtmlPage page = wc.goTo(cloud.getUrl() + "configure");
         String html = page.getWebResponse().getContentAsString();
 
-        assertFalse("Copy Template control must not render in read-only mode",
-                html.contains("proxmox-copy-template-button"));
+        assertFalse(html.contains("proxmox-copy-template-button"),
+                "Copy Template control must not render in read-only mode");
     }
 
     @Test
-    public void doCheckApiUrlRequiresAdminPermission() throws Exception {
+    void doCheckApiUrlRequiresAdminPermission() throws Exception {
         // doCheckApiUrl validates the cloud's API URL; gate it on ADMINISTER (issue #27).
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
         j.jenkins.setAuthorizationStrategy(new MockAuthorizationStrategy()
@@ -320,7 +318,7 @@ public class ProxmoxCloudTest {
                 new ProxmoxTokenCredentialsImpl(CredentialsScope.GLOBAL, "proxmox-cred", "desc",
                         "user@pve!token", Secret.fromString("secret")));
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
-        cloud.setApiUrl("http://localhost:" + wireMock.port());
+        cloud.setApiUrl("http://localhost:" + wireMock.getPort());
         cloud.setCredentialsId("proxmox-cred");
         return cloud;
     }

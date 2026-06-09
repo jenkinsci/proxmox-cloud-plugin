@@ -6,27 +6,33 @@ import hudson.slaves.EphemeralNode;
 import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 import org.kohsuke.stapler.StaplerRequest2;
 
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThrows;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests for {@link ProxmoxAgent}: persistence (issue #2) and the per-agent lifecycle overrides
  * (issue #10) exposed on the agent config page.
  */
-public class ProxmoxAgentTest {
+@WithJenkins
+class ProxmoxAgentTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
 
     private ProxmoxAgent newAgent(String name, int vmId) throws Exception {
         return newAgent(name, vmId, 10, 0);
@@ -39,14 +45,14 @@ public class ProxmoxAgentTest {
     }
 
     @Test
-    public void agentIsNotEphemeral() {
+    void agentIsNotEphemeral() {
         // Regression guard for issue #2: an EphemeralNode is wiped on restart and cannot resume jobs.
-        assertFalse("ProxmoxAgent must not implement EphemeralNode",
-                EphemeralNode.class.isAssignableFrom(ProxmoxAgent.class));
+        assertFalse(EphemeralNode.class.isAssignableFrom(ProxmoxAgent.class),
+                "ProxmoxAgent must not implement EphemeralNode");
     }
 
     @Test
-    public void xstreamRoundTripPreservesIdentityUseCountAndLifecycle() throws Exception {
+    void xstreamRoundTripPreservesIdentityUseCountAndLifecycle() throws Exception {
         ProxmoxAgent agent = newAgent("agent-rt", 305, 15, 7);
         agent.incrementUses();
         agent.incrementUses();
@@ -68,7 +74,7 @@ public class ProxmoxAgentTest {
     }
 
     @Test
-    public void addedNodeIsPersistedToDisk() throws Exception {
+    void addedNodeIsPersistedToDisk() throws Exception {
         ProxmoxAgent agent = newAgent("agent-persist", 306);
         j.jenkins.addNode(agent);
 
@@ -79,14 +85,14 @@ public class ProxmoxAgentTest {
     }
 
     @Test
-    public void lifecycleGettersReturnConstructorValues() throws Exception {
+    void lifecycleGettersReturnConstructorValues() throws Exception {
         ProxmoxAgent agent = newAgent("agent-life", 310, 42, 9);
         assertEquals(42, agent.getIdleTerminationMinutes());
         assertEquals(9, agent.getMaxTotalUses());
     }
 
     @Test
-    public void getInstanceCapReadsTemplate() throws Exception {
+    void getInstanceCapReadsTemplate() throws Exception {
         ProxmoxTemplate template = new ProxmoxTemplate("test-template", "pve1", 9000, "linux", 1);
         template.setInstanceCap(5);
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
@@ -94,18 +100,18 @@ public class ProxmoxAgentTest {
         j.jenkins.clouds.add(cloud);
 
         ProxmoxAgent agent = newAgent("agent-cap", 311);
-        assertEquals("instance cap is read through to the owning template", 5, agent.getInstanceCap());
+        assertEquals(5, agent.getInstanceCap(), "instance cap is read through to the owning template");
     }
 
     @Test
-    public void getInstanceCapIsZeroWhenCloudMissing() throws Exception {
+    void getInstanceCapIsZeroWhenCloudMissing() throws Exception {
         // No cloud registered: the read-only display must degrade gracefully rather than blow up.
         ProxmoxAgent agent = newAgent("agent-nocap", 312);
         assertEquals(0, agent.getInstanceCap());
     }
 
     @Test
-    public void reconfigureUpdatesLifecycleAndPreservesIdentity() throws Exception {
+    void reconfigureUpdatesLifecycleAndPreservesIdentity() throws Exception {
         ProxmoxAgent agent = newAgent("agent-reconf", 313, 30, 0);
 
         JSONObject form = new JSONObject();
@@ -131,17 +137,17 @@ public class ProxmoxAgentTest {
     }
 
     @Test
-    public void isOfflineDeadAppliesGraceWindow() {
+    void isOfflineDeadAppliesGraceWindow() {
         long now = 10_000_000L;
         long grace = 60_000L; // 60s
-        assertFalse("online/connecting (-1) is never dead", ProxmoxAgent.isOfflineDead(-1L, now, grace));
-        assertFalse("offline within grace is not dead", ProxmoxAgent.isOfflineDead(now - 30_000L, now, grace));
-        assertTrue("offline beyond grace is dead", ProxmoxAgent.isOfflineDead(now - 120_000L, now, grace));
-        assertTrue("boundary (exactly grace) counts as dead", ProxmoxAgent.isOfflineDead(now - grace, now, grace));
+        assertFalse(ProxmoxAgent.isOfflineDead(-1L, now, grace), "online/connecting (-1) is never dead");
+        assertFalse(ProxmoxAgent.isOfflineDead(now - 30_000L, now, grace), "offline within grace is not dead");
+        assertTrue(ProxmoxAgent.isOfflineDead(now - 120_000L, now, grace), "offline beyond grace is dead");
+        assertTrue(ProxmoxAgent.isOfflineDead(now - grace, now, grace), "boundary (exactly grace) counts as dead");
     }
 
     @Test
-    public void getOfflineSinceFallsBackToCreatedAtWithoutComputer() throws Exception {
+    void getOfflineSinceFallsBackToCreatedAtWithoutComputer() throws Exception {
         // A node not registered with Jenkins has no computer; getOfflineSince treats it as offline
         // since creation (the phantom case), so it does not artificially count toward the cap.
         ProxmoxAgent agent = newAgent("agent-nocomputer", 315);
@@ -149,7 +155,7 @@ public class ProxmoxAgentTest {
     }
 
     @Test
-    public void reconfigureRejectsNegativeLifecycleValues() throws Exception {
+    void reconfigureRejectsNegativeLifecycleValues() throws Exception {
         ProxmoxAgent agent = newAgent("agent-neg", 314, 30, 0);
 
         JSONObject form = new JSONObject();

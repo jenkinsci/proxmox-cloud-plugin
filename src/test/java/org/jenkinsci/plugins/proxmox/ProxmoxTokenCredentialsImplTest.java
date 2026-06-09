@@ -3,14 +3,14 @@ package org.jenkinsci.plugins.proxmox;
 import com.cloudbees.plugins.credentials.CredentialsScope;
 import hudson.util.Secret;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class ProxmoxTokenCredentialsImplTest {
+class ProxmoxTokenCredentialsImplTest {
 
     @Test
-    public void testCredentialFields() {
+    void testCredentialFields() {
         ProxmoxTokenCredentialsImpl creds = new ProxmoxTokenCredentialsImpl(
                 CredentialsScope.GLOBAL,
                 "test-id",

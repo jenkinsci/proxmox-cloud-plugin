@@ -2,8 +2,7 @@ package org.jenkinsci.plugins.proxmox;
 
 import com.cloudbees.plugins.credentials.CredentialsScope;
 import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.client.WireMock;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import hudson.model.Node;
 import hudson.model.TaskListener;
 import hudson.util.Secret;
@@ -11,11 +10,11 @@ import org.jenkinsci.plugins.proxmox.ProxmoxOrphanCleanup.DeadAgent;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
 import java.lang.reflect.Field;
 import java.util.HashMap;
@@ -23,37 +22,34 @@ import java.util.List;
 import java.util.Map;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests for {@link ProxmoxOrphanCleanup}, covering both directions of reconciliation: destroying
  * VMs Jenkins no longer tracks, and (added with issue #2) removing persisted agent nodes whose
  * backing VM is gone or no longer running.
  */
-public class ProxmoxOrphanCleanupTest {
+@WithJenkins
+class ProxmoxOrphanCleanupTest {
 
     private static final long NO_GRACE = 0L;
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .configureStaticDsl(true)
+            .build();
 
-    private WireMockServer wireMock;
+    private JenkinsRule j;
 
-    @Before
-    public void setUp() {
-        wireMock = new WireMockServer(wireMockConfig().dynamicPort());
-        wireMock.start();
-        WireMock.configureFor("localhost", wireMock.port());
-    }
-
-    @After
-    public void tearDown() {
-        wireMock.stop();
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
     }
 
     private ProxmoxAgent newAgent(String name, String node, int vmId) throws Exception {
@@ -78,7 +74,7 @@ public class ProxmoxOrphanCleanupTest {
         template.setCloneStrategy(CloneStrategy.FULL);
 
         ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
-        cloud.setApiUrl("http://localhost:" + wireMock.port());
+        cloud.setApiUrl("http://localhost:" + wireMock.getPort());
         cloud.setCredentialsId("proxmox-cred");
         cloud.setOperationTimeout(60);
         cloud.setCleanupOrphanedAgents(true);
@@ -92,7 +88,7 @@ public class ProxmoxOrphanCleanupTest {
     private static final Map<ProxmoxAgent, Long> ALL_ONLINE = Map.of();
 
     @Test
-    public void findDeadNodes_retainsRunningVm() throws Exception {
+    void findDeadNodes_retainsRunningVm() throws Exception {
         ProxmoxAgent agent = newAgent("a", "pve1", 300);
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
         assertTrue(ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
@@ -100,29 +96,29 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void findDeadNodes_flagsGoneVmForNodeOnlyRemoval() throws Exception {
+    void findDeadNodes_flagsGoneVmForNodeOnlyRemoval() throws Exception {
         ProxmoxAgent agent = newAgent("a", "pve1", 301);
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
         List<DeadAgent> dead = ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
                 ALL_ONLINE, farFuture(), NO_GRACE);
         assertEquals(1, dead.size());
         assertEquals(301, dead.get(0).agent().getVmId());
-        assertFalse("gone VM => nothing to destroy", dead.get(0).vmExists());
+        assertFalse(dead.get(0).vmExists(), "gone VM => nothing to destroy");
     }
 
     @Test
-    public void findDeadNodes_flagsStoppedVmForDestroyAndRemoval() throws Exception {
+    void findDeadNodes_flagsStoppedVmForDestroyAndRemoval() throws Exception {
         ProxmoxAgent agent = newAgent("a", "pve1", 301);
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(301, "stopped"));
         List<DeadAgent> dead = ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status,
                 ALL_ONLINE, farFuture(), NO_GRACE);
         assertEquals(1, dead.size());
         assertEquals(301, dead.get(0).agent().getVmId());
-        assertTrue("stopped VM still exists and must be destroyed", dead.get(0).vmExists());
+        assertTrue(dead.get(0).vmExists(), "stopped VM still exists and must be destroyed");
     }
 
     @Test
-    public void findDeadNodes_skipsAgentWhenNodeListingFailed() throws Exception {
+    void findDeadNodes_skipsAgentWhenNodeListingFailed() throws Exception {
         ProxmoxAgent agent = newAgent("a", "pve1", 301);
         // pve1 absent from the map => its VM listing failed => never conclude the VM is gone/stopped.
         Map<String, Map<Integer, String>> status = new HashMap<>();
@@ -131,7 +127,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void findDeadNodes_skipsAgentWithinGracePeriod() throws Exception {
+    void findDeadNodes_skipsAgentWithinGracePeriod() throws Exception {
         ProxmoxAgent agent = newAgent("a", "pve1", 301); // VM gone
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
         // Agent is ~0s old; with a 600s grace it must be left alone despite the VM being gone.
@@ -141,7 +137,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void findDeadNodes_handlesMixedFleet() throws Exception {
+    void findDeadNodes_handlesMixedFleet() throws Exception {
         ProxmoxAgent running = newAgent("running", "pve1", 300);
         ProxmoxAgent gone = newAgent("gone", "pve1", 301);
         ProxmoxAgent stopped = newAgent("stopped", "pve1", 302);
@@ -161,7 +157,7 @@ public class ProxmoxOrphanCleanupTest {
     // --- findDeadNodes: offline-with-running-VM zombies (issue #16) ---
 
     @Test
-    public void findDeadNodes_flagsRunningVmWhoseChannelIsOfflineBeyondGrace() throws Exception {
+    void findDeadNodes_flagsRunningVmWhoseChannelIsOfflineBeyondGrace() throws Exception {
         ProxmoxAgent agent = newAgent("zombie", "pve1", 300);
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
         long now = agent.getCreatedAt() + 600_000L;          // past the createdAt grace
@@ -172,25 +168,25 @@ public class ProxmoxOrphanCleanupTest {
                 offline, now, 60_000L);                      // 60s grace
 
         assertEquals(1, dead.size());
-        assertTrue("running VM still exists and must be destroyed", dead.get(0).vmExists());
-        assertEquals("flagged because the channel is offline, not the run-state",
-                ProxmoxOrphanCleanup.DeadReason.CHANNEL_OFFLINE, dead.get(0).reason());
+        assertTrue(dead.get(0).vmExists(), "running VM still exists and must be destroyed");
+        assertEquals(ProxmoxOrphanCleanup.DeadReason.CHANNEL_OFFLINE, dead.get(0).reason(),
+                "flagged because the channel is offline, not the run-state");
     }
 
     @Test
-    public void findDeadNodes_retainsRunningVmWhoseChannelBlippedWithinGrace() throws Exception {
+    void findDeadNodes_retainsRunningVmWhoseChannelBlippedWithinGrace() throws Exception {
         ProxmoxAgent agent = newAgent("blip", "pve1", 300);
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
         long now = agent.getCreatedAt() + 600_000L;
         long offlineSince = now - 10_000L;                   // offline only 10s
         Map<ProxmoxAgent, Long> offline = Map.of(agent, offlineSince);
 
-        assertTrue("a brief blip must not reap a running agent",
-                ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status, offline, now, 60_000L).isEmpty());
+        assertTrue(ProxmoxOrphanCleanup.findDeadNodes(List.of(agent), status, offline, now, 60_000L).isEmpty(),
+                "a brief blip must not reap a running agent");
     }
 
     @Test
-    public void findDeadNodes_retainsRunningVmThatIsOnline() throws Exception {
+    void findDeadNodes_retainsRunningVmThatIsOnline() throws Exception {
         ProxmoxAgent agent = newAgent("online", "pve1", 300);
         Map<String, Map<Integer, String>> status = Map.of("pve1", Map.of(300, "running"));
         // -1 mirrors ProxmoxAgent.getOfflineSince() for an online/connecting computer.
@@ -202,7 +198,7 @@ public class ProxmoxOrphanCleanupTest {
     // --- end-to-end via cleanupCloud (JenkinsRule + WireMock) ---
 
     @Test
-    public void cleanup_removesNodeWhoseVmVanished_andKeepsLiveNode() throws Exception {
+    void cleanup_removesNodeWhoseVmVanished_andKeepsLiveNode() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock();
         j.jenkins.addNode(newAgent("agent-live", "pve1", 300));
         ProxmoxAgent dead = newAgent("agent-dead", "pve1", 301);
@@ -217,12 +213,12 @@ public class ProxmoxOrphanCleanupTest {
 
         new ProxmoxOrphanCleanup().cleanupCloud(cloud, j.jenkins);
 
-        assertNotNull("agent whose VM still runs must be retained", j.jenkins.getNode("agent-live"));
-        assertNull("agent whose backing VM vanished must be removed", j.jenkins.getNode("agent-dead"));
+        assertNotNull(j.jenkins.getNode("agent-live"), "agent whose VM still runs must be retained");
+        assertNull(j.jenkins.getNode("agent-dead"), "agent whose backing VM vanished must be removed");
     }
 
     @Test
-    public void cleanup_destroysStoppedVm_andRemovesNode() throws Exception {
+    void cleanup_destroysStoppedVm_andRemovesNode() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock();
         ProxmoxAgent stopped = newAgent("agent-stopped", "pve1", 303);
         backdateCreatedAt(stopped, 3_600_000L);
@@ -246,11 +242,11 @@ public class ProxmoxOrphanCleanupTest {
         new ProxmoxOrphanCleanup().cleanupCloud(cloud, j.jenkins);
 
         verify(deleteRequestedFor(urlPathEqualTo("/api2/json/nodes/pve1/qemu/303")));
-        assertNull("agent with a stopped VM must be removed", j.jenkins.getNode("agent-stopped"));
+        assertNull(j.jenkins.getNode("agent-stopped"), "agent with a stopped VM must be removed");
     }
 
     @Test
-    public void cleanup_destroysOnlyOrphanedManagedVms() throws Exception {
+    void cleanup_destroysOnlyOrphanedManagedVms() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock();
         // No Jenkins agents registered, so every non-template VM is "unknown"; only the one carrying
         // our marker should be destroyed. Validates the orphaned-VM pass survived the refactor.
@@ -279,7 +275,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void cleanup_skipsOrphanedRunningVmWithinGracePeriod() throws Exception {
+    void cleanup_skipsOrphanedRunningVmWithinGracePeriod() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock(); // grace = 600s default
         // A jenkins-managed VM with no Jenkins node, running, uptime only 5s -> likely a clone whose
         // agent has not registered yet -> must NOT be destroyed within the grace period.
@@ -296,7 +292,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void cleanup_destroysOrphanedStoppedVmRegardlessOfGracePeriod() throws Exception {
+    void cleanup_destroysOrphanedStoppedVmRegardlessOfGracePeriod() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock();
         // A stopped jenkins-managed orphan cannot be a live provision, so it is destroyed even with
         // zero uptime (the grace period only protects running VMs).
@@ -319,7 +315,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void cleanup_removesStaleNodeButSpareesReusedVm() throws Exception {
+    void cleanup_removesStaleNodeButSpareesReusedVm() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock();
         // A stale node points at VM 305, but that id has since been re-cloned for something else
         // (a foreign / manually-created VM). The dead node must be removed, but the VM that no longer
@@ -344,34 +340,34 @@ public class ProxmoxOrphanCleanupTest {
         new ProxmoxOrphanCleanup().cleanupCloud(cloud, j.jenkins);
 
         verify(0, deleteRequestedFor(urlPathEqualTo("/api2/json/nodes/pve1/qemu/305")));
-        assertNull("the stale Jenkins node must still be removed", j.jenkins.getNode("agent-stale"));
+        assertNull(j.jenkins.getNode("agent-stale"), "the stale Jenkins node must still be removed");
     }
 
     // --- cadence + per-cloud gating (issue #19) ---
 
     @Test
-    public void isDue_firstRunAlwaysDue() {
+    void isDue_firstRunAlwaysDue() {
         assertTrue(ProxmoxOrphanCleanup.isDue(null, 1_000L, 600_000L));
     }
 
     @Test
-    public void isDue_trueOncePeriodElapsed() {
-        assertTrue("exactly at the period is due", ProxmoxOrphanCleanup.isDue(0L, 600_000L, 600_000L));
-        assertTrue("past the period is due", ProxmoxOrphanCleanup.isDue(0L, 700_000L, 600_000L));
+    void isDue_trueOncePeriodElapsed() {
+        assertTrue(ProxmoxOrphanCleanup.isDue(0L, 600_000L, 600_000L), "exactly at the period is due");
+        assertTrue(ProxmoxOrphanCleanup.isDue(0L, 700_000L, 600_000L), "past the period is due");
     }
 
     @Test
-    public void isDue_falseWithinPeriod() {
+    void isDue_falseWithinPeriod() {
         assertFalse(ProxmoxOrphanCleanup.isDue(0L, 599_999L, 600_000L));
     }
 
     @Test
-    public void recurrencePeriod_defaultsWhenNoCloudsConfigured() {
+    void recurrencePeriod_defaultsWhenNoCloudsConfigured() {
         assertEquals(600_000L, new ProxmoxOrphanCleanup().getRecurrencePeriod());
     }
 
     @Test
-    public void recurrencePeriod_usesSmallestEnabledCloudPeriod() {
+    void recurrencePeriod_usesSmallestEnabledCloudPeriod() {
         ProxmoxCloud a = new ProxmoxCloud("cloud-a");
         a.setCleanupOrphanedAgents(true);
         a.setOrphanCleanupPeriodSeconds(300);
@@ -385,7 +381,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void recurrencePeriod_honorsThirtySecondMinimum() {
+    void recurrencePeriod_honorsThirtySecondMinimum() {
         ProxmoxCloud fast = new ProxmoxCloud("cloud-fast");
         fast.setCleanupOrphanedAgents(true);
         fast.setOrphanCleanupPeriodSeconds(30); // the minimum allowed period
@@ -395,7 +391,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void recurrencePeriod_ignoresCleanupDisabledClouds() {
+    void recurrencePeriod_ignoresCleanupDisabledClouds() {
         ProxmoxCloud disabled = new ProxmoxCloud("cloud-disabled");
         disabled.setCleanupOrphanedAgents(false);
         disabled.setOrphanCleanupPeriodSeconds(30); // would lower the base if it were counted
@@ -409,7 +405,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void execute_gatesSecondRunWithinPeriod() throws Exception {
+    void execute_gatesSecondRunWithinPeriod() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock(); // cleanup enabled, default 600s period
         j.jenkins.clouds.add(cloud);
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
@@ -433,7 +429,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void restartMonitor_inactiveWhenPeriodNotReduced() {
+    void restartMonitor_inactiveWhenPeriodNotReduced() {
         cleanupCloud("c", 600);
         ProxmoxOrphanCleanup work = new ProxmoxOrphanCleanup();
         work.getRecurrencePeriod(); // schedules at 600s
@@ -442,7 +438,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void restartMonitor_activatesWhenPeriodReducedBelowScheduled() {
+    void restartMonitor_activatesWhenPeriodReducedBelowScheduled() {
         ProxmoxCloud cloud = cleanupCloud("c", 600);
         ProxmoxOrphanCleanup work = new ProxmoxOrphanCleanup();
         work.getRecurrencePeriod(); // captures scheduled = 600s
@@ -456,7 +452,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void restartMonitor_clearsWhenPeriodRaisedBack() {
+    void restartMonitor_clearsWhenPeriodRaisedBack() {
         ProxmoxCloud cloud = cleanupCloud("c", 600);
         ProxmoxOrphanCleanup work = new ProxmoxOrphanCleanup();
         work.getRecurrencePeriod();
@@ -469,7 +465,7 @@ public class ProxmoxOrphanCleanupTest {
     }
 
     @Test
-    public void restartMonitor_inactiveBeforeWorkScheduled() {
+    void restartMonitor_inactiveBeforeWorkScheduled() {
         cleanupCloud("c", 40);
         // getRecurrencePeriod() never called -> scheduledPeriodMs still -1 -> no false positive.
         assertFalse(new ProxmoxOrphanCleanup().isRestartNeededForReducedPeriod());

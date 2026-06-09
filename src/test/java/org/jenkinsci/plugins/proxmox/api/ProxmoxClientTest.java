@@ -1,44 +1,39 @@
 package org.jenkinsci.plugins.proxmox.api;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.client.WireMock;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import hudson.util.Secret;
 import org.jenkinsci.plugins.proxmox.api.model.*;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.util.List;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class ProxmoxClientTest {
+class ProxmoxClientTest {
 
-    private WireMockServer wireMock;
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .configureStaticDsl(true)
+            .build();
+
     private ProxmoxClient client;
 
-    @Before
-    public void setUp() {
-        wireMock = new WireMockServer(wireMockConfig().dynamicPort());
-        wireMock.start();
-        WireMock.configureFor("localhost", wireMock.port());
-
+    @BeforeEach
+    void setUp() {
         client = new ProxmoxClient(
-                "http://localhost:" + wireMock.port(),
+                "http://localhost:" + wireMock.getPort(),
                 "user@pve!token",
                 Secret.fromString("test-secret-uuid"),
                 false);
     }
 
-    @After
-    public void tearDown() {
-        wireMock.stop();
-    }
-
     @Test
-    public void testAuthHeader() {
+    void testAuthHeader() {
         stubFor(get(urlEqualTo("/api2/json/version"))
                 .willReturn(okJson("{\"data\":{\"version\":\"8.2.4\"}}")));
 
@@ -49,7 +44,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetVersion() {
+    void testGetVersion() {
         stubFor(get(urlEqualTo("/api2/json/version"))
                 .willReturn(okJson("{\"data\":{\"version\":\"8.2.4\",\"release\":\"8.2\"}}")));
 
@@ -58,7 +53,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetNodes() {
+    void testGetNodes() {
         stubFor(get(urlEqualTo("/api2/json/nodes"))
                 .willReturn(okJson("{\"data\":[{\"node\":\"pve1\",\"status\":\"online\",\"cpu\":0.15,\"maxmem\":34359738368}]}")));
 
@@ -69,7 +64,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetTemplates() {
+    void testGetTemplates() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
                 .willReturn(okJson("{\"data\":[" +
                         "{\"vmid\":100,\"name\":\"template-ubuntu\",\"status\":\"stopped\",\"template\":1}," +
@@ -83,7 +78,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetNextVmId() {
+    void testGetNextVmId() {
         stubFor(get(urlEqualTo("/api2/json/cluster/nextid"))
                 .willReturn(okJson("{\"data\":\"300\"}")));
 
@@ -92,7 +87,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testCloneVm() {
+    void testCloneVm() {
         stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/100/clone"))
                 .willReturn(okJson("{\"data\":\"UPID:pve1:00001234:0000ABCD:12345678:qmclone:100:user@pve:\"}")));
 
@@ -107,7 +102,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testStartVm() {
+    void testStartVm() {
         stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/300/status/start"))
                 .willReturn(okJson("{\"data\":\"UPID:pve1:00001234:start\"}")));
 
@@ -116,7 +111,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testStopVm() {
+    void testStopVm() {
         stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/300/status/stop"))
                 .willReturn(okJson("{\"data\":\"UPID:pve1:00001234:stop\"}")));
 
@@ -125,7 +120,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testDestroyVm() {
+    void testDestroyVm() {
         stubFor(delete(urlPathEqualTo("/api2/json/nodes/pve1/qemu/300"))
                 .willReturn(okJson("{\"data\":\"UPID:pve1:00001234:destroy\"}")));
 
@@ -134,7 +129,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetVmStatus() {
+    void testGetVmStatus() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/300/status/current"))
                 .willReturn(okJson("{\"data\":{\"vmid\":300,\"name\":\"test-vm\",\"status\":\"running\",\"uptime\":3600,\"template\":0}}")));
 
@@ -146,7 +141,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetStoragePools() {
+    void testGetStoragePools() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/storage"))
                 .willReturn(okJson("{\"data\":[{\"storage\":\"local-lvm\",\"type\":\"lvmthin\",\"avail\":107374182400}]}")));
 
@@ -156,7 +151,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetNetworkInterfaces() {
+    void testGetNetworkInterfaces() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/300/agent/network-get-interfaces"))
                 .willReturn(okJson("{\"data\":{\"result\":[" +
                         "{\"name\":\"eth0\",\"ip-addresses\":[{\"ip-address-type\":\"ipv4\",\"ip-address\":\"10.0.0.50\"}]}," +
@@ -170,7 +165,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testWaitForTaskSuccess() {
+    void testWaitForTaskSuccess() {
         stubFor(get(urlPathMatching("/api2/json/nodes/pve1/tasks/.*"))
                 .inScenario("task-completion")
                 .whenScenarioStateIs("Started")
@@ -185,40 +180,40 @@ public class ProxmoxClientTest {
         client.waitForTask("pve1", "UPID:test", 30);
     }
 
-    @Test(expected = ProxmoxTaskFailedException.class)
-    public void testWaitForTaskFailure() {
+    @Test
+    void testWaitForTaskFailure() {
         stubFor(get(urlPathMatching("/api2/json/nodes/pve1/tasks/.*"))
                 .willReturn(okJson("{\"data\":{\"upid\":\"UPID:test\",\"status\":\"stopped\",\"exitstatus\":\"ERROR: something went wrong\"}}")));
 
-        client.waitForTask("pve1", "UPID:test", 30);
-    }
-
-    @Test(expected = ProxmoxAuthenticationException.class)
-    public void testAuthenticationFailure() {
-        stubFor(get(urlEqualTo("/api2/json/version"))
-                .willReturn(aResponse().withStatus(401).withBody("authentication failure")));
-
-        client.getVersion();
-    }
-
-    @Test(expected = ProxmoxResourceNotFoundException.class)
-    public void testNotFound() {
-        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/999/status/current"))
-                .willReturn(aResponse().withStatus(404).withBody("not found")));
-
-        client.getVmStatus("pve1", 999);
-    }
-
-    @Test(expected = ProxmoxException.class)
-    public void testServerError() {
-        stubFor(get(urlEqualTo("/api2/json/version"))
-                .willReturn(aResponse().withStatus(500).withBody("internal error")));
-
-        client.getVersion();
+        assertThrows(ProxmoxTaskFailedException.class, () -> client.waitForTask("pve1", "UPID:test", 30));
     }
 
     @Test
-    public void testConfigureVm() {
+    void testAuthenticationFailure() {
+        stubFor(get(urlEqualTo("/api2/json/version"))
+                .willReturn(aResponse().withStatus(401).withBody("authentication failure")));
+
+        assertThrows(ProxmoxAuthenticationException.class, () -> client.getVersion());
+    }
+
+    @Test
+    void testNotFound() {
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/999/status/current"))
+                .willReturn(aResponse().withStatus(404).withBody("not found")));
+
+        assertThrows(ProxmoxResourceNotFoundException.class, () -> client.getVmStatus("pve1", 999));
+    }
+
+    @Test
+    void testServerError() {
+        stubFor(get(urlEqualTo("/api2/json/version"))
+                .willReturn(aResponse().withStatus(500).withBody("internal error")));
+
+        assertThrows(ProxmoxException.class, () -> client.getVersion());
+    }
+
+    @Test
+    void testConfigureVm() {
         stubFor(put(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
                 .willReturn(okJson("{\"data\":null}")));
 
@@ -232,7 +227,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testSetNetworkBridge() {
+    void testSetNetworkBridge() {
         // A clone inherits the template's net0; setNetworkBridge reads it, swaps only the bridge=
         // component, and writes the result back, preserving the NIC model, MAC, and other options.
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
@@ -251,7 +246,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testSetNetworkBridgeNoNet0DoesNotWrite() {
+    void testSetNetworkBridgeNoNet0DoesNotWrite() {
         // A VM with no net0 device cannot have a bridge applied; the call is a no-op, not a write.
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
                 .willReturn(okJson("{\"data\":{\"cores\":2}}")));
@@ -262,7 +257,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testSetNetworkBridgeNoChangeSkipsWrite() {
+    void testSetNetworkBridgeNoChangeSkipsWrite() {
         // Already on the requested bridge: skip the PUT to avoid a pointless config write.
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
                 .willReturn(okJson("{\"data\":{\"net0\":\"virtio=BC:24:11:2A:3B:4C,bridge=vmbr1\"}}")));
@@ -273,25 +268,25 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testReplaceBridgeSwapsOnlyBridgeComponent() {
+    void testReplaceBridgeSwapsOnlyBridgeComponent() {
         assertEquals("virtio=BC:24:11:2A:3B:4C,bridge=vmbr1,firewall=1",
                 ProxmoxClient.replaceBridge("virtio=BC:24:11:2A:3B:4C,bridge=vmbr0,firewall=1", "vmbr1"));
     }
 
     @Test
-    public void testReplaceBridgePreservesOrderAndOptions() {
+    void testReplaceBridgePreservesOrderAndOptions() {
         assertEquals("virtio=BC:24:11:2A:3B:4C,bridge=vmbr2,tag=10,mtu=1500",
                 ProxmoxClient.replaceBridge("virtio=BC:24:11:2A:3B:4C,bridge=vmbr0,tag=10,mtu=1500", "vmbr2"));
     }
 
     @Test
-    public void testReplaceBridgeAppendsWhenAbsent() {
+    void testReplaceBridgeAppendsWhenAbsent() {
         assertEquals("virtio=BC:24:11:2A:3B:4C,bridge=vmbr0",
                 ProxmoxClient.replaceBridge("virtio=BC:24:11:2A:3B:4C", "vmbr0"));
     }
 
     @Test
-    public void testGetNextVmIdWithMinAboveDefault() {
+    void testGetNextVmIdWithMinAboveDefault() {
         stubFor(get(urlEqualTo("/api2/json/cluster/nextid"))
                 .willReturn(okJson("{\"data\":\"103\"}")));
         stubFor(get(urlEqualTo("/api2/json/cluster/nextid?vmid=200"))
@@ -302,7 +297,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetNextVmIdWithMinBelowDefault() {
+    void testGetNextVmIdWithMinBelowDefault() {
         stubFor(get(urlEqualTo("/api2/json/cluster/nextid"))
                 .willReturn(okJson("{\"data\":\"300\"}")));
 
@@ -311,7 +306,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetNextVmIdWithMinSkipsTaken() {
+    void testGetNextVmIdWithMinSkipsTaken() {
         stubFor(get(urlEqualTo("/api2/json/cluster/nextid"))
                 .willReturn(okJson("{\"data\":\"103\"}")));
         stubFor(get(urlEqualTo("/api2/json/cluster/nextid?vmid=200"))
@@ -325,7 +320,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetNetworkDevices() {
+    void testGetNetworkDevices() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/network"))
                 .willReturn(okJson("{\"data\":[" +
                         "{\"iface\":\"vmbr0\",\"type\":\"bridge\",\"active\":1}," +
@@ -344,7 +339,7 @@ public class ProxmoxClientTest {
     }
 
     @Test
-    public void testGetPools() {
+    void testGetPools() {
         stubFor(get(urlEqualTo("/api2/json/pools"))
                 .willReturn(okJson("{\"data\":[" +
                         "{\"poolid\":\"dev\",\"comment\":\"Development pool\"}," +

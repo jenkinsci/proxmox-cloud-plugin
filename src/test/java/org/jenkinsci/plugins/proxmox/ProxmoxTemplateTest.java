@@ -11,53 +11,59 @@ import hudson.util.ListBoxModel;
 import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class ProxmoxTemplateTest {
+@WithJenkins
+class ProxmoxTemplateTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
 
     @Test
-    public void testMatchesExactLabel() {
+    void testMatchesExactLabel() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         assertTrue(template.matches(Label.get("linux")));
     }
 
     @Test
-    public void testMatchesMultipleLabels() {
+    void testMatchesMultipleLabels() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux docker", 1);
         assertTrue(template.matches(Label.get("linux")));
         assertTrue(template.matches(Label.get("docker")));
     }
 
     @Test
-    public void testDoesNotMatchWrongLabel() {
+    void testDoesNotMatchWrongLabel() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         assertFalse(template.matches(Label.get("windows")));
     }
 
     @Test
-    public void testMatchesNullLabelNormalMode() {
+    void testMatchesNullLabelNormalMode() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setMode(Node.Mode.NORMAL);
         assertTrue(template.matches(null));
     }
 
     @Test
-    public void testDoesNotMatchNullLabelExclusiveMode() {
+    void testDoesNotMatchNullLabelExclusiveMode() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setMode(Node.Mode.EXCLUSIVE);
         assertFalse(template.matches(null));
     }
 
     @Test
-    public void testDefaults() {
+    void testDefaults() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         assertEquals(CloneStrategy.FULL, template.getCloneStrategy());
         assertEquals("/home/ubuntu/agent", template.getRemoteFs());
@@ -73,19 +79,20 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void instanceMinSetterAccepts() {
+    void instanceMinSetterAccepts() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setInstanceMin(2);
         assertEquals(2, template.getInstanceMin());
     }
 
-    @Test(expected = IllegalArgumentException.class)
-    public void instanceMinSetterRejectsNegative() {
-        new ProxmoxTemplate("test", "pve1", 100, "linux", 1).setInstanceMin(-1);
+    @Test
+    void instanceMinSetterRejectsNegative() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new ProxmoxTemplate("test", "pve1", 100, "linux", 1).setInstanceMin(-1));
     }
 
     @Test
-    public void doCheckInstanceMinValidatesRangeAndCap() {
+    void doCheckInstanceMinValidatesRangeAndCap() {
         ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
         assertEquals(FormValidation.Kind.OK, d.doCheckInstanceMin(0, 0).kind);   // none
         assertEquals(FormValidation.Kind.OK, d.doCheckInstanceMin(3, 0).kind);   // cap 0 = unlimited
@@ -96,20 +103,20 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void testNumExecutorsMinimum() {
+    void testNumExecutorsMinimum() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 0);
         assertEquals(1, template.getNumExecutors());
     }
 
     @Test
-    public void getRemoteFsKeepsExplicitValue() {
+    void getRemoteFsKeepsExplicitValue() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setRemoteFs("/data/jenkins");
         assertEquals("/data/jenkins", template.getRemoteFs());
     }
 
     @Test
-    public void getRemoteFsFallsBackToCiUserHomeWhenBlank() {
+    void getRemoteFsFallsBackToCiUserHomeWhenBlank() {
         // A blank Remote FS Root is stored as null by setRemoteFs; getRemoteFs() must still return a
         // usable path. Issue #18: provision() previously passed the raw null straight to the agent,
         // which then NPE'd in SSHLauncher.getWorkingDirectory() at launch.
@@ -120,7 +127,7 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void getRemoteFsIsNeverBlank() {
+    void getRemoteFsIsNeverBlank() {
         // Whitespace-only field and no ciUser: still a non-blank default, never null/blank.
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setRemoteFs("   ");
@@ -131,7 +138,7 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void javaDistributionSetterDefaultsNullToNone() {
+    void javaDistributionSetterDefaultsNullToNone() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setJavaDistribution(JavaDistribution.OPENJDK);
         assertEquals(JavaDistribution.OPENJDK, template.getJavaDistribution());
@@ -140,19 +147,20 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void javaMajorVersionSetterAccepts() {
+    void javaMajorVersionSetterAccepts() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setJavaMajorVersion(25);
         assertEquals(25, template.getJavaMajorVersion());
     }
 
-    @Test(expected = IllegalArgumentException.class)
-    public void javaMajorVersionSetterRejectsNegative() {
-        new ProxmoxTemplate("test", "pve1", 100, "linux", 1).setJavaMajorVersion(-1);
+    @Test
+    void javaMajorVersionSetterRejectsNegative() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new ProxmoxTemplate("test", "pve1", 100, "linux", 1).setJavaMajorVersion(-1));
     }
 
     @Test
-    public void doFillJavaMajorVersionItemsListsSuggestions() {
+    void doFillJavaMajorVersionItemsListsSuggestions() {
         ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
         ComboBoxModel items = d.doFillJavaMajorVersionItems();
         assertTrue(items.contains("21"));
@@ -160,7 +168,7 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void doCheckJavaMajorVersionIgnoredWhenDistributionNone() {
+    void doCheckJavaMajorVersionIgnoredWhenDistributionNone() {
         ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
         // The version is unused when no distribution is selected, so any value is accepted.
         assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("", "NONE").kind);
@@ -169,7 +177,7 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void doCheckJavaMajorVersionValidatesWhenDistributionSelected() {
+    void doCheckJavaMajorVersionValidatesWhenDistributionSelected() {
         ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
         assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("21", "OPENJDK").kind);
         assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("26", "CORRETTO").kind);
@@ -179,7 +187,7 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void doCheckJavaMajorVersionWarnsButAllowsBelowRecommendedMinimum() {
+    void doCheckJavaMajorVersionWarnsButAllowsBelowRecommendedMinimum() {
         // Java 17 is below the recommended minimum (21) but allowed: the user may have a reason.
         ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
         assertEquals(FormValidation.Kind.WARNING, d.doCheckJavaMajorVersion("17", "OPENJDK").kind);
@@ -187,7 +195,7 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void doFillItemsRequireAdminPermission() throws Exception {
+    void doFillItemsRequireAdminPermission() throws Exception {
         // The Proxmox-connecting fill methods enumerate cluster inventory over the network, so they
         // are gated on ADMINISTER (issue #27): a user without it gets an empty model and no API call.
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
@@ -214,7 +222,7 @@ public class ProxmoxTemplateTest {
     }
 
     @Test
-    public void doCheckItemsSkipValidationWithoutAdminPermission() throws Exception {
+    void doCheckItemsSkipValidationWithoutAdminPermission() throws Exception {
         // doCheck methods return OK for a user lacking ADMINISTER rather than running validation (issue #27).
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
         j.jenkins.setAuthorizationStrategy(new MockAuthorizationStrategy()

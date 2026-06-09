@@ -6,26 +6,32 @@ import hudson.security.ACLContext;
 import hudson.util.FormValidation;
 import jenkins.model.GlobalConfiguration;
 import jenkins.model.Jenkins;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class ProxmoxCloudConfigSyncTest {
+@WithJenkins
+class ProxmoxCloudConfigSyncTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
 
     @Test
-    public void globalConfigurationRegistered() {
+    void globalConfigurationRegistered() {
         ProxmoxCloudConfigSync config = GlobalConfiguration.all().get(ProxmoxCloudConfigSync.class);
         assertNotNull(config);
     }
 
     @Test
-    public void configurationPersistence() throws Exception {
+    void configurationPersistence() throws Exception {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         assertNotNull(config);
 
@@ -50,35 +56,35 @@ public class ProxmoxCloudConfigSyncTest {
     }
 
     @Test
-    public void doCheckCronSpec_valid() {
+    void doCheckCronSpec_valid() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         FormValidation result = config.doCheckCronSpec("H/5 * * * *");
         assertEquals(FormValidation.Kind.OK, result.kind);
     }
 
     @Test
-    public void doCheckCronSpec_invalid() {
+    void doCheckCronSpec_invalid() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         FormValidation result = config.doCheckCronSpec("not a cron expression");
         assertEquals(FormValidation.Kind.ERROR, result.kind);
     }
 
     @Test
-    public void doCheckCronSpec_empty() {
+    void doCheckCronSpec_empty() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         FormValidation result = config.doCheckCronSpec("");
         assertEquals(FormValidation.Kind.OK, result.kind);
     }
 
     @Test
-    public void doCheckCronSpec_null() {
+    void doCheckCronSpec_null() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         FormValidation result = config.doCheckCronSpec(null);
         assertEquals(FormValidation.Kind.OK, result.kind);
     }
 
     @Test
-    public void performSync_notEnabled() {
+    void performSync_notEnabled() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         config.setEnabled(false);
 
@@ -89,7 +95,7 @@ public class ProxmoxCloudConfigSyncTest {
     }
 
     @Test
-    public void performSync_missingGitUrl() {
+    void performSync_missingGitUrl() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         config.setEnabled(true);
         config.setGitUrl("");
@@ -101,34 +107,34 @@ public class ProxmoxCloudConfigSyncTest {
     }
 
     @Test
-    public void allowManualChanges_defaultTrue() {
+    void allowManualChanges_defaultTrue() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         assertTrue(config.isAllowManualChanges());
     }
 
     @Test
-    public void doCheckGitUrl_empty() {
+    void doCheckGitUrl_empty() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         FormValidation result = config.doCheckGitUrl("");
         assertEquals(FormValidation.Kind.ERROR, result.kind);
     }
 
     @Test
-    public void doCheckGitUrl_valid() {
+    void doCheckGitUrl_valid() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         FormValidation result = config.doCheckGitUrl("https://github.com/org/repo.git");
         assertEquals(FormValidation.Kind.OK, result.kind);
     }
 
     @Test
-    public void doCheckYamlFilePath_empty() {
+    void doCheckYamlFilePath_empty() {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         FormValidation result = config.doCheckYamlFilePath("");
         assertEquals(FormValidation.Kind.ERROR, result.kind);
     }
 
     @Test
-    public void doCheckMethodsRequireAdminPermission() throws Exception {
+    void doCheckMethodsRequireAdminPermission() throws Exception {
         // The config-sync doCheck methods return OK for a user lacking ADMINISTER (issue #27).
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
         j.jenkins.setAuthorizationStrategy(new MockAuthorizationStrategy()

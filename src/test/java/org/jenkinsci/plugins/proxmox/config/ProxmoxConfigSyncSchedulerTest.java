@@ -1,24 +1,30 @@
 package org.jenkinsci.plugins.proxmox.config;
 
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class ProxmoxConfigSyncSchedulerTest {
+@WithJenkins
+class ProxmoxConfigSyncSchedulerTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
 
     @Test
-    public void recurrencePeriodIs60Seconds() {
+    void recurrencePeriodIs60Seconds() {
         ProxmoxConfigSyncScheduler scheduler = new ProxmoxConfigSyncScheduler();
         assertEquals(60_000, scheduler.getRecurrencePeriod());
     }
 
     @Test
-    public void doesNothingWhenDisabled() throws Exception {
+    void doesNothingWhenDisabled() throws Exception {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         config.setEnabled(false);
         config.setCronSpec("* * * * *");
@@ -30,7 +36,7 @@ public class ProxmoxConfigSyncSchedulerTest {
     }
 
     @Test
-    public void doesNothingWhenNoCronSpec() throws Exception {
+    void doesNothingWhenNoCronSpec() throws Exception {
         ProxmoxCloudConfigSync config = ProxmoxCloudConfigSync.get();
         config.setEnabled(true);
         config.setCronSpec("");

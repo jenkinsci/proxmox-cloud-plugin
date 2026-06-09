@@ -2,13 +2,14 @@ package org.jenkinsci.plugins.proxmox;
 
 import hudson.model.Node;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests for {@link ProxmoxRetentionStrategy}: the stateless construction contract, the
@@ -17,10 +18,15 @@ import static org.junit.Assert.assertTrue;
  * mid-build cases can be exercised without a live agent; the wiring tests confirm the override is
  * reachable through a real {@link ProxmoxComputer}.
  */
-public class ProxmoxRetentionStrategyTest {
+@WithJenkins
+class ProxmoxRetentionStrategyTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
 
     private ProxmoxAgent newAgent(String name, int vmId, int idleMinutes, int maxUses) throws Exception {
         ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 0);
@@ -29,7 +35,7 @@ public class ProxmoxRetentionStrategyTest {
     }
 
     @Test
-    public void testConstruction() {
+    void testConstruction() {
         // The strategy is stateless; idle-timeout and max-uses now live on the ProxmoxAgent and are
         // read live in check(). Construction must remain trivial so it can be attached to every agent.
         ProxmoxRetentionStrategy strategy = new ProxmoxRetentionStrategy();
@@ -39,7 +45,7 @@ public class ProxmoxRetentionStrategyTest {
     // --- acceptsMoreTasks: the isAcceptingTasks dispatch gate ---
 
     @Test
-    public void acceptsMoreTasksUnlimitedWhenCapNonPositive() {
+    void acceptsMoreTasksUnlimitedWhenCapNonPositive() {
         // maxTotalUses <= 0 means unlimited reuse: always accept, whatever the counts.
         assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(0, 0, 0));
         assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(0, 99, 5));
@@ -47,19 +53,19 @@ public class ProxmoxRetentionStrategyTest {
     }
 
     @Test
-    public void acceptsMoreTasksBelowCap() {
+    void acceptsMoreTasksBelowCap() {
         assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(3, 0, 0));
         assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(3, 2, 0));
     }
 
     @Test
-    public void acceptsMoreTasksRejectsAtOrAboveCap() {
+    void acceptsMoreTasksRejectsAtOrAboveCap() {
         assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(2, 2, 0));
         assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(2, 3, 0));
     }
 
     @Test
-    public void acceptsMoreTasksCountsInFlightBuilds() {
+    void acceptsMoreTasksCountsInFlightBuilds() {
         // Multi-executor: completed + in-flight must not exceed the cap, even though the use count
         // only rises at completion. cap=2 with one completed + one running build => reject.
         assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(2, 1, 1));
@@ -71,18 +77,18 @@ public class ProxmoxRetentionStrategyTest {
     // --- shouldTerminateForMaxUses: the idle-guarded check() termination ---
 
     @Test
-    public void shouldNotTerminateWhenUnlimited() {
+    void shouldNotTerminateWhenUnlimited() {
         assertFalse(ProxmoxRetentionStrategy.shouldTerminateForMaxUses(0, 5, true));
         assertFalse(ProxmoxRetentionStrategy.shouldTerminateForMaxUses(-1, 5, true));
     }
 
     @Test
-    public void shouldNotTerminateBelowCap() {
+    void shouldNotTerminateBelowCap() {
         assertFalse(ProxmoxRetentionStrategy.shouldTerminateForMaxUses(3, 2, true));
     }
 
     @Test
-    public void shouldNotTerminateCappedButBusy() {
+    void shouldNotTerminateCappedButBusy() {
         // The core fix for issue #12: a capped agent still running a build (not idle) must NOT be
         // killed -- it drains first, then check() reaps it once idle.
         assertFalse(ProxmoxRetentionStrategy.shouldTerminateForMaxUses(2, 2, false));
@@ -90,7 +96,7 @@ public class ProxmoxRetentionStrategyTest {
     }
 
     @Test
-    public void shouldTerminateCappedAndIdle() {
+    void shouldTerminateCappedAndIdle() {
         assertTrue(ProxmoxRetentionStrategy.shouldTerminateForMaxUses(2, 2, true));
         assertTrue(ProxmoxRetentionStrategy.shouldTerminateForMaxUses(2, 3, true));
     }
@@ -98,31 +104,31 @@ public class ProxmoxRetentionStrategyTest {
     // --- retainsMinimum: the warm-pool idle-termination gate (issue #20) ---
 
     @Test
-    public void retainsMinimumFalseWhenNoMinimumConfigured() {
+    void retainsMinimumFalseWhenNoMinimumConfigured() {
         assertFalse(ProxmoxRetentionStrategy.retainsMinimum(1, 0));
     }
 
     @Test
-    public void retainsMinimumTrueAtOrBelowMinimum() {
-        assertTrue("below the minimum is retained", ProxmoxRetentionStrategy.retainsMinimum(1, 2));
-        assertTrue("exactly at the minimum is retained", ProxmoxRetentionStrategy.retainsMinimum(2, 2));
+    void retainsMinimumTrueAtOrBelowMinimum() {
+        assertTrue(ProxmoxRetentionStrategy.retainsMinimum(1, 2), "below the minimum is retained");
+        assertTrue(ProxmoxRetentionStrategy.retainsMinimum(2, 2), "exactly at the minimum is retained");
     }
 
     @Test
-    public void retainsMinimumFalseAboveMinimum() {
+    void retainsMinimumFalseAboveMinimum() {
         // Surplus above the minimum is reaped normally.
         assertFalse(ProxmoxRetentionStrategy.retainsMinimum(3, 2));
     }
 
     @Test
-    public void retainsMinimumFalseWithNoActiveAgents() {
+    void retainsMinimumFalseWithNoActiveAgents() {
         assertFalse(ProxmoxRetentionStrategy.retainsMinimum(0, 2));
     }
 
     // --- isAcceptingTasks: real ProxmoxComputer wiring ---
 
     @Test
-    public void isAcceptingTasksFlipsToFalseAtCap() throws Exception {
+    void isAcceptingTasksFlipsToFalseAtCap() throws Exception {
         ProxmoxAgent agent = newAgent("retention-cap", 330, 10, 2); // maxTotalUses = 2
         j.jenkins.addNode(agent);
         ProxmoxComputer computer = (ProxmoxComputer) j.jenkins.getComputer("retention-cap");
@@ -130,15 +136,15 @@ public class ProxmoxRetentionStrategyTest {
 
         ProxmoxRetentionStrategy strategy = new ProxmoxRetentionStrategy();
         // The computer is idle (countBusy() == 0), so the gate tracks the completed-use count.
-        assertTrue("fresh agent accepts work", strategy.isAcceptingTasks(computer));
+        assertTrue(strategy.isAcceptingTasks(computer), "fresh agent accepts work");
         agent.incrementUses();
-        assertTrue("one use, below cap, still accepts", strategy.isAcceptingTasks(computer));
+        assertTrue(strategy.isAcceptingTasks(computer), "one use, below cap, still accepts");
         agent.incrementUses();
-        assertFalse("at cap, stops accepting new builds", strategy.isAcceptingTasks(computer));
+        assertFalse(strategy.isAcceptingTasks(computer), "at cap, stops accepting new builds");
     }
 
     @Test
-    public void isAcceptingTasksAlwaysTrueWhenUnlimited() throws Exception {
+    void isAcceptingTasksAlwaysTrueWhenUnlimited() throws Exception {
         ProxmoxAgent agent = newAgent("retention-unlimited", 331, 10, 0); // 0 => unlimited reuse
         j.jenkins.addNode(agent);
         ProxmoxComputer computer = (ProxmoxComputer) j.jenkins.getComputer("retention-unlimited");
@@ -148,6 +154,6 @@ public class ProxmoxRetentionStrategyTest {
         agent.incrementUses();
         agent.incrementUses();
         agent.incrementUses();
-        assertTrue("unlimited agents never stop accepting", strategy.isAcceptingTasks(computer));
+        assertTrue(strategy.isAcceptingTasks(computer), "unlimited agents never stop accepting");
     }
 }
