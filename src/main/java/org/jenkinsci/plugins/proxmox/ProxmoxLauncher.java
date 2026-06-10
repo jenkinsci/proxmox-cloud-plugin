@@ -47,6 +47,10 @@ public class ProxmoxLauncher extends ComputerLauncher {
     private final int javaMajorVersion;
 
     private transient SSHLauncher delegate;
+    // Opens SSH sessions for the Java auto-install. Lazily defaulted to a trilead-backed factory;
+    // package-private setter lets tests inject a fake so installJava is unit-testable without a real
+    // SSH server. transient like delegate: it is behaviour, not persisted agent config.
+    private transient SshConnectionFactory sshConnectionFactory;
 
     public ProxmoxLauncher(String sshCredentialsId, String javaPath, String jvmOptions,
                             int startupWaitSeconds, String staticIp,
@@ -164,7 +168,8 @@ public class ProxmoxLauncher extends ComputerLauncher {
         }
     }
 
-    private void installJava(String host, PrintStream log) throws IOException, InterruptedException {
+    // Package-private for unit testing (via an injected SshConnectionFactory).
+    void installJava(String host, PrintStream log) throws IOException, InterruptedException {
         String installCmd = javaDistribution.getInstallCommand(javaMajorVersion);
         if (installCmd == null) return;
 
@@ -180,12 +185,8 @@ public class ProxmoxLauncher extends ComputerLauncher {
             throw new IOException("SSH credentials not found: " + sshCredentialsId);
         }
 
-        Connection conn = new Connection(host, SSH_PORT);
-        try {
-            conn.connect(null, 30000, 30000);
-
-            boolean authenticated = authenticateConnection(conn, creds);
-            if (!authenticated) {
+        try (SshConnection conn = sshConnectionFactory().open(host, SSH_PORT)) {
+            if (!authenticate(conn, creds)) {
                 throw new IOException("SSH authentication failed for Java installation");
             }
 
@@ -206,40 +207,28 @@ public class ProxmoxLauncher extends ComputerLauncher {
                     .map(String::strip)
                     .filter(line -> !line.isEmpty())
                     .forEach(line -> log.println("[Proxmox]   " + line));
-        } finally {
-            conn.close();
         }
     }
 
-    private String execRemoteCommand(Connection conn, String command, PrintStream log,
+    private String execRemoteCommand(SshConnection conn, String command, PrintStream log,
                                       String description) throws IOException, InterruptedException {
-        Session session = conn.openSession();
-        try {
-            session.execCommand(command);
-            String stdout = readStream(session.getStdout());
-            String stderr = readStream(session.getStderr());
-            session.waitForCondition(com.trilead.ssh2.ChannelCondition.EXIT_STATUS,
-                    (long) startupWaitSeconds * 1000);
-            Integer exitCode = session.getExitStatus();
-
-            if (exitCode == null || exitCode != 0) {
-                log.println("[Proxmox] " + description + " output: " + stdout);
-                log.println("[Proxmox] " + description + " errors: " + stderr);
-                throw new IOException(description + " failed with exit code " + exitCode);
-            }
-            return stdout + stderr;
-        } finally {
-            session.close();
+        SshExecResult result = conn.exec(command, startupWaitSeconds);
+        Integer exitCode = result.exitStatus();
+        if (exitCode == null || exitCode != 0) {
+            log.println("[Proxmox] " + description + " output: " + result.stdout());
+            log.println("[Proxmox] " + description + " errors: " + result.stderr());
+            throw new IOException(description + " failed with exit code " + exitCode);
         }
+        return result.stdout() + result.stderr();
     }
 
-    private boolean authenticateConnection(Connection conn, StandardUsernameCredentials creds) throws IOException {
+    private boolean authenticate(SshConnection conn, StandardUsernameCredentials creds) throws IOException {
         String username = creds.getUsername();
 
         if (creds instanceof com.cloudbees.jenkins.plugins.sshcredentials.SSHUserPrivateKey sshKey) {
             List<String> keys = sshKey.getPrivateKeys();
             if (!keys.isEmpty()) {
-                return conn.authenticateWithPublicKey(username, keys.get(0).toCharArray(), null);
+                return conn.authenticateWithPublicKey(username, keys.get(0).toCharArray());
             }
         }
 
@@ -250,18 +239,99 @@ public class ProxmoxLauncher extends ComputerLauncher {
         throw new IOException("Unsupported credential type: " + creds.getClass().getName());
     }
 
-    private String readStream(InputStream in) throws IOException {
-        if (in == null) return "";
-        byte[] buf = new byte[8192];
-        StringBuilder sb = new StringBuilder();
-        int n;
-        while ((n = in.read(buf)) > 0) {
-            sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+    private SshConnectionFactory sshConnectionFactory() {
+        if (sshConnectionFactory == null) {
+            sshConnectionFactory = TrileadSshConnection::open;
         }
-        return sb.toString();
+        return sshConnectionFactory;
     }
 
-    private String resolveIp(ProxmoxAgent agent, PrintStream log) {
+    /** Inject a fake SSH connection factory for unit testing. */
+    void setSshConnectionFactory(SshConnectionFactory factory) {
+        this.sshConnectionFactory = factory;
+    }
+
+    /** Combined output of a remote command plus its exit status ({@code null} if the channel gave none). */
+    record SshExecResult(String stdout, String stderr, Integer exitStatus) {}
+
+    /**
+     * A connected SSH session. Abstracts the trilead {@link Connection} so the Java auto-install flow
+     * ({@link #installJava}) is unit-testable with a fake instead of a live SSH server.
+     */
+    interface SshConnection extends AutoCloseable {
+        boolean authenticateWithPublicKey(String username, char[] privateKey) throws IOException;
+
+        boolean authenticateWithPassword(String username, String password) throws IOException;
+
+        SshExecResult exec(String command, int timeoutSeconds) throws IOException, InterruptedException;
+
+        @Override
+        void close();
+    }
+
+    /** Opens (connects) an {@link SshConnection}. Injected so tests can supply a fake. */
+    interface SshConnectionFactory {
+        SshConnection open(String host, int port) throws IOException;
+    }
+
+    /** trilead-backed {@link SshConnection}: the only place the real SSH library is touched. */
+    private static final class TrileadSshConnection implements SshConnection {
+        private final Connection conn;
+
+        private TrileadSshConnection(Connection conn) {
+            this.conn = conn;
+        }
+
+        static SshConnection open(String host, int port) throws IOException {
+            Connection conn = new Connection(host, port);
+            conn.connect(null, 30000, 30000);
+            return new TrileadSshConnection(conn);
+        }
+
+        @Override
+        public boolean authenticateWithPublicKey(String username, char[] privateKey) throws IOException {
+            return conn.authenticateWithPublicKey(username, privateKey, null);
+        }
+
+        @Override
+        public boolean authenticateWithPassword(String username, String password) throws IOException {
+            return conn.authenticateWithPassword(username, password);
+        }
+
+        @Override
+        public SshExecResult exec(String command, int timeoutSeconds) throws IOException, InterruptedException {
+            Session session = conn.openSession();
+            try {
+                session.execCommand(command);
+                String stdout = readStream(session.getStdout());
+                String stderr = readStream(session.getStderr());
+                session.waitForCondition(com.trilead.ssh2.ChannelCondition.EXIT_STATUS,
+                        (long) timeoutSeconds * 1000);
+                return new SshExecResult(stdout, stderr, session.getExitStatus());
+            } finally {
+                session.close();
+            }
+        }
+
+        @Override
+        public void close() {
+            conn.close();
+        }
+
+        private static String readStream(InputStream in) throws IOException {
+            if (in == null) return "";
+            byte[] buf = new byte[8192];
+            StringBuilder sb = new StringBuilder();
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+            }
+            return sb.toString();
+        }
+    }
+
+    // Package-private for unit testing.
+    String resolveIp(ProxmoxAgent agent, PrintStream log) {
         if (staticIp != null && !staticIp.isBlank()) {
             log.println("[Proxmox] Using static IP from cloud-init config");
             return staticIp;
@@ -305,7 +375,8 @@ public class ProxmoxLauncher extends ComputerLauncher {
                 + " within " + startupWaitSeconds + "s");
     }
 
-    private void waitForSsh(String host, PrintStream log) {
+    // Package-private for unit testing.
+    void waitForSsh(String host, PrintStream log) {
         log.println("[Proxmox] Waiting for SSH on " + host + ":" + SSH_PORT + "...");
         long deadline = System.currentTimeMillis() + (long) startupWaitSeconds * 1000;
 
