@@ -4,7 +4,11 @@ import hudson.plugins.sshslaves.SSHLauncher;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests that {@link ProxmoxLauncher} forwards the agent-process tunables (JVM options and java path)
@@ -70,5 +74,28 @@ class ProxmoxLauncherTest {
         SSHLauncher d = delegate();
         launcher("/opt/jdk/bin/java", "", JavaDistribution.OPENJDK).configureDelegate(d);
         assertEquals("", d.getJavaPath());
+    }
+
+    // shortTitle keeps the cloud-stats attempts table on one line; the full trace is on the detail page.
+
+    @Test
+    void shortTitleKeepsConciseMessagesVerbatim() {
+        // The launcher's own timeout messages are already short enough to render on one line.
+        assertEquals("No IP for VM 303 within 60s",
+                ProxmoxLauncher.shortTitle(new IOException("No IP for VM 303 within 60s")));
+    }
+
+    @Test
+    void shortTitleTrimsLongMessagesAtWordBoundary() {
+        String t = ProxmoxLauncher.shortTitle(new IOException(
+                "SSH authentication failed for the agent while installing the JDK over the channel"));
+        assertTrue(t.length() <= 39, "trimmed to one short line, was: " + t);
+        assertTrue(t.endsWith("…"));
+        assertFalse(t.substring(0, t.length() - 1).endsWith(" "), "no trailing space before the ellipsis");
+    }
+
+    @Test
+    void shortTitleFallsBackToClassNameWhenNoMessage() {
+        assertEquals("NullPointerException", ProxmoxLauncher.shortTitle(new NullPointerException()));
     }
 }

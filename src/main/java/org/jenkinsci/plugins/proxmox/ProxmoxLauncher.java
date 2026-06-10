@@ -109,7 +109,28 @@ public class ProxmoxLauncher extends ComputerLauncher {
             return;
         }
         stats.attach(activity, activity.getCurrentPhase(),
-                new PhaseExecutionAttachment.ExceptionAttachment(ProvisioningActivity.Status.FAIL, cause));
+                new PhaseExecutionAttachment.ExceptionAttachment(
+                        ProvisioningActivity.Status.FAIL, shortTitle(cause), cause));
+    }
+
+    /**
+     * A concise, single-line title for the cloud-stats attempts table, which shows the attachment in
+     * a narrow column where a long message wraps awkwardly. The full message and stack trace stay on
+     * the attachment's detail page (carried by the throwable), so this only trims what the table
+     * shows. Package-private for unit testing.
+     */
+    static String shortTitle(Throwable cause) {
+        String msg = cause.getMessage();
+        if (msg == null || msg.isBlank()) {
+            return cause.getClass().getSimpleName();
+        }
+        msg = msg.strip().replaceAll("\\s+", " ");
+        int max = 38;
+        if (msg.length() <= max) {
+            return msg;
+        }
+        int cut = msg.lastIndexOf(' ', max);
+        return msg.substring(0, cut > 20 ? cut : max) + "…";
     }
 
     /**
@@ -280,8 +301,8 @@ public class ProxmoxLauncher extends ComputerLauncher {
             }
         }
 
-        throw new ProxmoxException("Could not resolve IP for VM " + agent.getVmId()
-                + " within " + startupWaitSeconds + " seconds");
+        throw new ProxmoxException("No IP for VM " + agent.getVmId()
+                + " within " + startupWaitSeconds + "s");
     }
 
     private void waitForSsh(String host, PrintStream log) {
@@ -305,7 +326,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
             }
         }
 
-        throw new ProxmoxException("SSH on " + host + ":" + SSH_PORT
-                + " not reachable within " + startupWaitSeconds + " seconds");
+        throw new ProxmoxException("No SSH on " + host
+                + " within " + startupWaitSeconds + "s");
     }
 }
