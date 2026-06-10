@@ -1,8 +1,10 @@
 package org.jenkinsci.plugins.proxmox;
 
 import hudson.slaves.AbstractCloudComputer;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
+import org.jenkinsci.plugins.cloudstats.TrackedItem;
 
-public class ProxmoxComputer extends AbstractCloudComputer<ProxmoxAgent> {
+public class ProxmoxComputer extends AbstractCloudComputer<ProxmoxAgent> implements TrackedItem {
 
     public ProxmoxComputer(ProxmoxAgent agent) {
         super(agent);
@@ -16,5 +18,12 @@ public class ProxmoxComputer extends AbstractCloudComputer<ProxmoxAgent> {
     public String getProxmoxNode() {
         ProxmoxAgent node = getNode();
         return node != null ? node.getProxmoxNode() : null;
+    }
+
+    /** Delegates to the backing node so cloud-stats can track this computer's launch/operate phases. */
+    @Override
+    public ProvisioningActivity.Id getId() {
+        ProxmoxAgent node = getNode();
+        return node != null ? node.getId() : null;
     }
 }

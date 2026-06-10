@@ -15,6 +15,9 @@ import hudson.util.ListBoxModel;
 import hudson.util.Secret;
 import jenkins.model.Jenkins;
 import org.jenkinsci.Symbol;
+import org.jenkinsci.plugins.cloudstats.CloudStatistics;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
+import org.jenkinsci.plugins.cloudstats.TrackedPlannedNode;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxAuthenticationException;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
@@ -169,19 +172,23 @@ public class ProxmoxCloud extends Cloud {
 
             int toProvision = Math.min(excessWorkload, available);
             for (int i = 0; i < toProvision; i++) {
-                String displayName = template.getName() + " (pending)";
                 ProxmoxTemplate t = template;
+                // Mint the cloud-stats activity id up front so the same instance is carried by the
+                // planned node and stored on the agent the future returns; cloud-stats' own
+                // CloudProvisioningListener opens the PROVISIONING phase when this TrackedPlannedNode
+                // is returned, and marks it failed if the future completes exceptionally.
+                ProvisioningActivity.Id activityId = new ProvisioningActivity.Id(name, t.getName());
                 // Each clone reserves its own id under a short lock, then clones/starts outside it, so
                 // multiple agents come up concurrently up to the cap rather than strictly serially.
                 Future<Node> future = Computer.threadPoolForRemoting.submit(() -> {
                     int vmId = reserveVmId();
                     try {
-                        return t.provision(this, hudson.model.TaskListener.NULL, vmId);
+                        return t.provision(this, hudson.model.TaskListener.NULL, vmId, activityId);
                     } finally {
                         releaseVmId(vmId);
                     }
                 });
-                planned.add(new NodeProvisioner.PlannedNode(displayName, future, template.getNumExecutors()));
+                planned.add(new TrackedPlannedNode(activityId, template.getNumExecutors(), future));
                 excessWorkload -= template.getNumExecutors();
             }
         }
@@ -209,12 +216,20 @@ public class ProxmoxCloud extends Cloud {
             return 0;
         }
 
+        // The warm pool is not driven by the NodeProvisioner, so cloud-stats' CloudProvisioningListener
+        // never sees these agents. Open each activity ourselves with onStarted (and close it with
+        // onFailure on a failed clone); the launch/operate/complete phases are still tracked
+        // automatically once the node is added, via cloud-stats' Computer/Node listeners.
         List<Future<Node>> futures = new ArrayList<>();
+        List<ProvisioningActivity.Id> activityIds = new ArrayList<>();
         for (int i = 0; i < toProvision; i++) {
+            ProvisioningActivity.Id activityId = new ProvisioningActivity.Id(name, template.getName());
+            CloudStatistics.ProvisioningListener.get().onStarted(activityId);
+            activityIds.add(activityId);
             futures.add(Computer.threadPoolForRemoting.submit(() -> {
                 int vmId = reserveVmId();
                 try {
-                    return template.provision(this, hudson.model.TaskListener.NULL, vmId);
+                    return template.provision(this, hudson.model.TaskListener.NULL, vmId, activityId);
                 } finally {
                     releaseVmId(vmId);
                 }
@@ -223,11 +238,13 @@ public class ProxmoxCloud extends Cloud {
 
         Jenkins jenkins = Jenkins.get();
         int added = 0;
-        for (Future<Node> future : futures) {
+        for (int i = 0; i < futures.size(); i++) {
+            ProvisioningActivity.Id activityId = activityIds.get(i);
             try {
-                jenkins.addNode(future.get());
+                jenkins.addNode(futures.get(i).get());
                 added++;
             } catch (Exception e) {
+                CloudStatistics.ProvisioningListener.get().onFailure(activityId, e);
                 LOGGER.log(Level.WARNING, "Warm-pool provision failed for template "
                         + template.getName() + " in cloud " + name, e);
             }
@@ -288,17 +305,22 @@ public class ProxmoxCloud extends Cloud {
             throw HttpResponses.error(HttpServletResponse.SC_BAD_REQUEST, "Jenkins is quieting down");
         }
 
+        // Manual provisioning also bypasses the NodeProvisioner, so open/close the cloud-stats
+        // activity ourselves like the warm pool does.
+        ProvisioningActivity.Id activityId = new ProvisioningActivity.Id(name, t.getName());
+        CloudStatistics.ProvisioningListener.get().onStarted(activityId);
         try {
             ProxmoxAgent agent;
             int vmId = reserveVmId();
             try {
-                agent = t.provision(this, hudson.model.TaskListener.NULL, vmId);
+                agent = t.provision(this, hudson.model.TaskListener.NULL, vmId, activityId);
             } finally {
                 releaseVmId(vmId);
             }
             jenkins.addNode(agent);
             return new HttpRedirect("/computer/" + agent.getNodeName());
         } catch (Exception e) {
+            CloudStatistics.ProvisioningListener.get().onFailure(activityId, e);
             LOGGER.log(Level.SEVERE, "Failed to provision from template: " + template, e);
             throw HttpResponses.error(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
                     "Provisioning failed: " + e.getMessage());
