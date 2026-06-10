@@ -352,4 +352,15 @@ class ProxmoxClientTest {
         assertEquals("Development pool", pools.get(0).comment());
         assertEquals("prod", pools.get(1).poolid());
     }
+
+    @Test
+    void ignoreSslErrorsBuildsTrustAllClient() {
+        // Constructing with ignoreSslErrors=true runs createTrustAllSslContext() to install the
+        // trust-all SSLContext on the client. (The no-op X509TrustManager method bodies only execute
+        // during a real TLS handshake against a hostname-matching self-signed cert, which needs a
+        // keystore fixture; that is left uncovered.)
+        ProxmoxClient sslClient = new ProxmoxClient(
+                "https://localhost:1", "user@pve!token", Secret.fromString("test-secret-uuid"), true);
+        assertNotNull(sslClient);
+    }
 }
