@@ -14,6 +14,7 @@ import hudson.util.FormValidation;
 import hudson.util.ListBoxModel;
 import hudson.util.Secret;
 import jenkins.model.Jenkins;
+import org.jenkinsci.plugins.proxmox.api.model.VmConfig;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
@@ -385,5 +386,97 @@ class ProxmoxTemplateTest {
         assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0).kind);
         assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(-5).kind);
         assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(9000).kind);
+    }
+
+    // --- provision(): clone/configure/start via WireMock, plus the config helpers ---
+
+    private void stubMinimalProvision(int vmId) {
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/clone"))
+                .willReturn(okJson("{\"data\":\"UPID:clone\"}")));
+        stubFor(get(urlPathMatching("/api2/json/nodes/pve1/tasks/.*/status"))
+                .willReturn(okJson("{\"data\":{\"upid\":\"x\",\"status\":\"stopped\",\"exitstatus\":\"OK\"}}")));
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/" + vmId + "/status/start"))
+                .willReturn(okJson("{\"data\":\"UPID:start\"}")));
+    }
+
+    private ProxmoxCloud cloudAtWireMock(String cred) {
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        cloud.setApiUrl(apiUrl());
+        cloud.setCredentialsId(cred);
+        return cloud;
+    }
+
+    @Test
+    void provisionClonesStartsAndReturnsAgent() throws Exception {
+        ProxmoxCloud cloud = cloudAtWireMock(registerCreds());
+        ProxmoxTemplate template = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        stubMinimalProvision(300);
+
+        ProxmoxAgent agent = template.provision(cloud, hudson.model.TaskListener.NULL, 300, null);
+
+        assertEquals("jenkins-agent-300", agent.getNodeName());
+        assertEquals(300, agent.getVmId());
+        assertEquals("test-cloud", agent.getCloudName());
+        assertEquals("pve1", agent.getProxmoxNode());
+        verify(postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/clone")));
+        verify(postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/300/status/start")));
+    }
+
+    @Test
+    void provisionAppliesConfigBridgeAndDiskResize() throws Exception {
+        ProxmoxCloud cloud = cloudAtWireMock(registerCreds());
+        ProxmoxTemplate template = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        template.setCores(4);
+        template.setMemory(8192);
+        template.setCiUser("ubuntu");
+        template.setIpConfig("ip=10.0.0.5/24,gw=10.0.0.1");
+        template.setNetworkBridge("vmbr1");
+        template.setDiskSizeGb(20);
+        stubMinimalProvision(301);
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/301/config"))
+                .willReturn(okJson("{\"data\":{\"net0\":\"virtio=BC:24:11:AA:BB:CC,bridge=vmbr0\"}}")));
+        stubFor(put(urlPathMatching("/api2/json/nodes/pve1/qemu/301/(config|resize)"))
+                .willReturn(okJson("{\"data\":null}")));
+
+        ProxmoxAgent agent = template.provision(cloud, hudson.model.TaskListener.NULL, 301, null);
+
+        assertEquals(301, agent.getVmId());
+        // The bridge override PUTs net0 to /config; the disk grows via /resize.
+        verify(putRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/301/config")).withRequestBody(containing("net0=")));
+        verify(putRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/301/resize")));
+    }
+
+    @Test
+    void parseStaticIpHandlesDhcpCidrAndMissingIp() {
+        ProxmoxTemplate t = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        assertNull(t.parseStaticIp(null));
+        assertNull(t.parseStaticIp("   "));
+        assertNull(t.parseStaticIp("ip=dhcp"));
+        assertNull(t.parseStaticIp("gw=10.0.0.1"));                          // no ip= component
+        assertEquals("10.0.0.5", t.parseStaticIp("ip=10.0.0.5/24,gw=10.0.0.1"));
+        assertEquals("10.0.0.5", t.parseStaticIp("ip=10.0.0.5/24"));
+        assertEquals("10.0.0.5", t.parseStaticIp("ip=10.0.0.5"));            // no CIDR slash
+    }
+
+    @Test
+    void buildVmConfigReturnsNullWhenNothingSet() {
+        ProxmoxTemplate t = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        assertNull(t.buildVmConfig(null));
+    }
+
+    @Test
+    void buildVmConfigMapsConfiguredFields() {
+        ProxmoxTemplate t = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        t.setCores(4);
+        t.setMemory(2048);
+        t.setCiUser("ubuntu");
+        t.setIpConfig("ip=10.0.0.5/24");
+        VmConfig cfg = t.buildVmConfig("ssh-ed25519 AAA");
+        assertNotNull(cfg);
+        assertEquals(4, cfg.cores().intValue());
+        assertEquals(2048, cfg.memory().intValue());
+        assertEquals("ubuntu", cfg.ciuser());
+        assertEquals("ssh-ed25519 AAA", cfg.sshkeys());
+        assertEquals("ip=10.0.0.5/24", cfg.ipconfig0());
     }
 }

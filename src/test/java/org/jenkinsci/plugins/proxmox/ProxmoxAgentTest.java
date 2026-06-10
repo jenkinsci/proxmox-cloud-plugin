@@ -130,6 +130,13 @@ class ProxmoxAgentTest {
     }
 
     @Test
+    void getCloudReturnsNullWhenCloudNotRegistered() throws Exception {
+        // newAgent uses cloudName "test-cloud", which is not registered as a Jenkins cloud here.
+        ProxmoxAgent agent = newAgent("agent-nocloud", 340);
+        assertNull(agent.getCloud());
+    }
+
+    @Test
     void addedNodeIsPersistedToDisk() throws Exception {
         ProxmoxAgent agent = newAgent("agent-persist", 306);
         j.jenkins.addNode(agent);

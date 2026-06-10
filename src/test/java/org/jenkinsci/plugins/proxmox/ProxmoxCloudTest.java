@@ -30,6 +30,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
 import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
+import org.kohsuke.stapler.HttpResponse;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -435,6 +436,101 @@ class ProxmoxCloudTest {
         String cred = registerProxmoxCreds();
         ListBoxModel m = cloudDescriptor().doFillCredentialsIdItems();
         assertTrue(m.stream().anyMatch(o -> cred.equals(o.value)));
+    }
+
+    // --- doProvision / provisionForMinimum / warm-pool provisioning via WireMock ---
+
+    private void stubProvisionSequence(int vmId) {
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid")).willReturn(okJson("{\"data\":\"" + vmId + "\"}")));
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/clone"))
+                .willReturn(okJson("{\"data\":\"UPID:clone\"}")));
+        stubFor(get(urlPathMatching("/api2/json/nodes/pve1/tasks/.*/status"))
+                .willReturn(okJson("{\"data\":{\"upid\":\"x\",\"status\":\"stopped\",\"exitstatus\":\"OK\"}}")));
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/" + vmId + "/status/start"))
+                .willReturn(okJson("{\"data\":\"UPID:start\"}")));
+        stubFor(put(urlPathMatching("/api2/json/nodes/pve1/qemu/.*/config"))
+                .willReturn(okJson("{\"data\":null}")));
+    }
+
+    @Test
+    void doProvisionRejectsUnknownTemplate() {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        cloud.setTemplates(List.of(new ProxmoxTemplate("known", "pve1", 9000, "linux", 1)));
+        assertThrows(Exception.class, () -> cloud.doProvision("does-not-exist"));
+    }
+
+    @Test
+    void doProvisionRejectsBlankTemplate() {
+        assertThrows(Exception.class, () -> cloudPointingAtWireMock().doProvision(""));
+    }
+
+    @Test
+    void doProvisionProvisionsAndRedirects() throws Exception {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        cloud.setTemplates(List.of(new ProxmoxTemplate("t", "pve1", 9000, "linux", 1)));
+        // Deliberately not registered as a Jenkins cloud: the node still provisions and is added, and
+        // the agent's async launch fails immediately on getCloud()==null without polling the API, so it
+        // cannot pollute the shared WireMock request journal that other tests assert against.
+        stubProvisionSequence(300);
+
+        HttpResponse resp = cloud.doProvision("t");
+        assertNotNull(resp);
+        assertNotNull(j.jenkins.getNode("jenkins-agent-300"));
+    }
+
+    @Test
+    void doProvisionReportsProvisionFailure() {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        cloud.setTemplates(List.of(new ProxmoxTemplate("t", "pve1", 9000, "linux", 1)));
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid")).willReturn(okJson("{\"data\":\"300\"}")));
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/clone"))
+                .willReturn(aResponse().withStatus(500).withBody("boom")));
+        // Clone fails -> the catch path runs onFailure and returns an error response (thrown).
+        assertThrows(Exception.class, () -> cloud.doProvision("t"));
+    }
+
+    @Test
+    void provisionForMinimumAddsNodes() throws Exception {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        ProxmoxTemplate template = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        cloud.setTemplates(List.of(template));
+        // Not registered (see doProvisionProvisionsAndRedirects): keeps the async launch from hitting
+        // WireMock so the shared request journal stays clean for the verify(0) tests.
+        stubProvisionSequence(300);
+
+        assertEquals(1, cloud.provisionForMinimum(template, 1));
+        assertNotNull(j.jenkins.getNode("jenkins-agent-300"));
+    }
+
+    @Test
+    void provisionForMinimumReportsFailureWhenCloneFails() {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        ProxmoxTemplate template = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        cloud.setTemplates(List.of(template));
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid")).willReturn(okJson("{\"data\":\"300\"}")));
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/clone"))
+                .willReturn(aResponse().withStatus(500).withBody("boom")));
+        // future.get() throws -> the onFailure branch runs, no node is added.
+        assertEquals(0, cloud.provisionForMinimum(template, 1));
+        assertNull(j.jenkins.getNode("jenkins-agent-300"));
+    }
+
+    @Test
+    void checkForMinimumInstancesProvisionsTowardMinimum() {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        ProxmoxTemplate template = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        template.setInstanceMin(1);
+        // checkForMinimumInstances iterates the registered clouds, so this cloud must be registered.
+        // A static IP + 1s wait keeps the agent's async launch off WireMock (resolveIp returns the
+        // static IP without an API call; waitForSsh fails fast against a black-hole address).
+        template.setIpConfig("ip=192.0.2.1/24");
+        template.setStartupWaitSeconds(1);
+        cloud.setTemplates(List.of(template));
+        j.jenkins.clouds.add(cloud);
+        stubProvisionSequence(300);
+
+        ProxmoxMinimumInstances.checkForMinimumInstances(); // runs synchronously on the calling thread
+        assertNotNull(j.jenkins.getNode("jenkins-agent-300"));
     }
 
     private static void setOfflineCauseTimestamp(OfflineCause cause, long timestampMs) throws Exception {

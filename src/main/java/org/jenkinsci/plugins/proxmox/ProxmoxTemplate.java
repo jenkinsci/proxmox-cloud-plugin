@@ -193,7 +193,8 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         }
     }
 
-    private VmConfig buildVmConfig(String sshPublicKey) {
+    // Package-private for unit testing.
+    VmConfig buildVmConfig(String sshPublicKey) {
         boolean hasConfig = (cores > 0) || (memory > 0) || ciUser != null
                 || sshPublicKey != null || ipConfig != null
                 || nameserver != null || searchDomain != null;
@@ -212,7 +213,8 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                 searchDomain);
     }
 
-    private String parseStaticIp(String ipConfig) {
+    // Package-private for unit testing.
+    String parseStaticIp(String ipConfig) {
         if (ipConfig == null || ipConfig.isBlank()) return null;
         if (ipConfig.contains("dhcp")) return null;
         int ipStart = ipConfig.indexOf("ip=");
