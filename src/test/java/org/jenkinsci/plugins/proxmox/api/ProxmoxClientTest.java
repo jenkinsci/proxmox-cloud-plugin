@@ -363,4 +363,45 @@ class ProxmoxClientTest {
                 "https://localhost:1", "user@pve!token", Secret.fromString("test-secret-uuid"), true);
         assertNotNull(sslClient);
     }
+
+    @Test
+    void getNextVmIdSearchesUpwardWhenDefaultBelowFloor() {
+        // The cluster default (100) is below the requested floor (300), so the client probes ?vmid=N.
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid")).willReturn(okJson("{\"data\":\"100\"}")));
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid?vmid=300")).willReturn(okJson("{\"data\":\"300\"}")));
+        assertEquals(300, client.getNextVmId(300));
+    }
+
+    @Test
+    void replaceBridgeSwapsAppendsAndPreservesOrder() {
+        assertEquals("virtio=AA:BB,bridge=vmbr1,firewall=1",
+                ProxmoxClient.replaceBridge("virtio=AA:BB,bridge=vmbr0,firewall=1", "vmbr1"));
+        assertEquals("virtio=AA:BB,bridge=vmbr1",
+                ProxmoxClient.replaceBridge("virtio=AA:BB", "vmbr1")); // no bridge= present -> appended
+    }
+
+    @Test
+    void resizeVmDiskSendsSizeWithGigabyteSuffix() {
+        stubFor(put(urlEqualTo("/api2/json/nodes/pve1/qemu/300/resize")).willReturn(okJson("{\"data\":null}")));
+        client.resizeVmDisk("pve1", 300, "scsi0", 20);
+        verify(putRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/300/resize"))
+                .withRequestBody(containing("disk=scsi0"))
+                .withRequestBody(containing("size=20G")));
+    }
+
+    @Test
+    void configureVmSendsOnlyTheSetFields() {
+        stubFor(put(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config")).willReturn(okJson("{\"data\":null}")));
+        // memory/sshkeys/ipconfig0/nameserver/searchdomain are null -> their branches are skipped.
+        client.configureVm("pve1", 300, new VmConfig(2, null, "ubuntu", null, null, null, null));
+        verify(putRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/300/config"))
+                .withRequestBody(containing("cores=2"))
+                .withRequestBody(containing("ciuser=ubuntu")));
+    }
+
+    @Test
+    void executeWrapsConnectionFailureAsProxmoxException() {
+        ProxmoxClient deadClient = new ProxmoxClient("http://localhost:1", "u@pve!t", Secret.fromString("s"), false);
+        assertThrows(ProxmoxException.class, deadClient::getVersion);
+    }
 }
