@@ -28,6 +28,9 @@ side for a hybrid on-prem/cloud fleet.
 - **VM-ID-reuse-safe teardown**: every destroy is ownership-verified and idempotent.
 - **Configuration as Code** from a YAML file in a git repository, with scheduled sync, drift
   detection, and read-only protection.
+- **Cloud Statistics integration**: agents are reported to the [Cloud Statistics
+  plugin](https://plugins.jenkins.io/cloud-stats/), so their provisioning, launch, operating, and
+  completion phases (and failures) show up under Manage Jenkins -> Cloud Statistics.
 
 ## How it works
 

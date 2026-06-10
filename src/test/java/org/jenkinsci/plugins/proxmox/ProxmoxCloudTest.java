@@ -11,11 +11,14 @@ import hudson.model.User;
 import hudson.security.ACL;
 import hudson.security.ACLContext;
 import hudson.slaves.Cloud;
+import hudson.slaves.NodeProvisioner;
 import hudson.slaves.OfflineCause;
 import hudson.util.FormValidation;
 import hudson.util.Secret;
 import jenkins.model.Jenkins;
 import org.htmlunit.html.HtmlPage;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
+import org.jenkinsci.plugins.cloudstats.TrackedPlannedNode;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxCloudConfigSync;
@@ -29,6 +32,7 @@ import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.util.Collection;
 import java.util.List;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
@@ -195,6 +199,32 @@ class ProxmoxCloudTest {
         assertEquals(0, cloud.getRunningAgentCount(), "a long-dead offline agent must not hold a cap slot");
     }
 
+    // --- cloud-stats integration ---
+
+    @Test
+    void provisionReturnsTrackedPlannedNodesCarryingActivityId() {
+        // provision() must hand the NodeProvisioner cloud-stats TrackedPlannedNodes so the activity is
+        // opened and tracked; the id carries the cloud + template names. The cap math runs on the
+        // calling thread without touching the API (the per-agent clone runs later in the future).
+        ProxmoxTemplate template = new ProxmoxTemplate("test-template", "pve1", 9000, "linux", 1);
+        ProxmoxCloud cloud = new ProxmoxCloud("test-cloud");
+        cloud.setApiUrl("http://localhost:" + wireMock.getPort());
+        cloud.setTemplates(List.of(template));
+
+        Collection<NodeProvisioner.PlannedNode> planned =
+                cloud.provision(new Cloud.CloudState(Label.get("linux"), 0), 2);
+
+        assertEquals(2, planned.size());
+        for (NodeProvisioner.PlannedNode node : planned) {
+            assertTrue(node instanceof TrackedPlannedNode,
+                    "provision must return cloud-stats TrackedPlannedNodes");
+            ProvisioningActivity.Id id = ((TrackedPlannedNode) node).getId();
+            assertNotNull(id);
+            assertEquals("test-cloud", id.getCloudName());
+            assertEquals("test-template", id.getTemplateName());
+        }
+    }
+
     // --- warm-pool minimum provisioning (issue #20) ---
 
     @Test
@@ -310,7 +340,7 @@ class ProxmoxCloudTest {
     private ProxmoxAgent newAgent(String name, int vmId) throws Exception {
         ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 0);
         return new ProxmoxAgent(name, "/home/jenkins", 1, Node.Mode.NORMAL, "linux",
-                launcher, "test-cloud", "test-template", "pve1", vmId, 10, 0);
+                launcher, "test-cloud", "test-template", "pve1", vmId, 10, 0, null);
     }
 
     private ProxmoxCloud cloudPointingAtWireMock() {

@@ -1,10 +1,12 @@
 package org.jenkinsci.plugins.proxmox;
 
+import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Node;
 import hudson.slaves.EphemeralNode;
 import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,7 +45,7 @@ class ProxmoxAgentTest {
     private ProxmoxAgent newAgent(String name, int vmId, int idleMinutes, int maxUses) throws Exception {
         ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 0);
         return new ProxmoxAgent(name, "/home/jenkins", 1, Node.Mode.NORMAL, "linux",
-                launcher, "test-cloud", "test-template", "pve1", vmId, idleMinutes, maxUses);
+                launcher, "test-cloud", "test-template", "pve1", vmId, idleMinutes, maxUses, null);
     }
 
     @Test
@@ -71,6 +75,58 @@ class ProxmoxAgentTest {
         assertEquals(7, restored.getMaxTotalUses());
         // The stateless retention strategy must survive too.
         assertTrue(restored.getRetentionStrategy() instanceof ProxmoxRetentionStrategy);
+    }
+
+    private ProxmoxAgent newTrackedAgent(String name, int vmId, ProvisioningActivity.Id id) throws Exception {
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 0);
+        return new ProxmoxAgent(name, "/home/jenkins", 1, Node.Mode.NORMAL, "linux",
+                launcher, "test-cloud", "test-template", "pve1", vmId, 10, 0, id);
+    }
+
+    @Test
+    void getIdReturnsProvisioningActivityId() throws Exception {
+        ProvisioningActivity.Id id = new ProvisioningActivity.Id("test-cloud", "test-template");
+        ProxmoxAgent agent = newTrackedAgent("agent-tracked", 320, id);
+        // cloud-stats correlates the planned node, node and computer by this exact instance.
+        assertSame(id, agent.getId());
+    }
+
+    @Test
+    void provisioningIdSurvivesXStream() throws Exception {
+        ProvisioningActivity.Id id = new ProvisioningActivity.Id("test-cloud", "test-template");
+        ProxmoxAgent agent = newTrackedAgent("agent-tracked-rt", 321, id);
+
+        String xml = Jenkins.XSTREAM2.toXML(agent);
+        ProxmoxAgent restored = (ProxmoxAgent) Jenkins.XSTREAM2.fromXML(xml);
+
+        // Id equality is by fingerprint, so the reloaded agent still resolves to the same activity
+        // after a controller restart.
+        assertNotNull(restored.getId());
+        assertEquals(id.getFingerprint(), restored.getId().getFingerprint());
+    }
+
+    @Test
+    void computerDelegatesIdToNode() throws Exception {
+        // cloud-stats reads the id off the Computer (for launch/operate phases); ProxmoxComputer must
+        // forward it from the node so the same activity is tracked end to end.
+        ProvisioningActivity.Id id = new ProvisioningActivity.Id("test-cloud", "test-template");
+        ProxmoxAgent agent = newTrackedAgent("agent-computer", 323, id);
+        j.jenkins.addNode(agent);
+
+        Computer computer = agent.toComputer();
+        assertNotNull(computer);
+        assertTrue(computer instanceof ProxmoxComputer);
+        ProvisioningActivity.Id computerId = ((ProxmoxComputer) computer).getId();
+        assertNotNull(computerId);
+        assertEquals(id.getFingerprint(), computerId.getFingerprint());
+    }
+
+    @Test
+    void nullProvisioningIdIsTolerated() throws Exception {
+        // TrackedItem permits a null id to opt out of tracking (e.g. an agent serialized before the
+        // cloud-stats integration); getId() must simply return null rather than blow up.
+        ProxmoxAgent agent = newTrackedAgent("agent-untracked", 322, null);
+        assertNull(agent.getId());
     }
 
     @Test

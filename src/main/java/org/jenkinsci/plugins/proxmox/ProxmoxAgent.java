@@ -15,6 +15,8 @@ import jenkins.model.Jenkins;
 
 import net.sf.json.JSONObject;
 import org.kohsuke.stapler.StaplerRequest2;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
+import org.jenkinsci.plugins.cloudstats.TrackedItem;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxResourceNotFoundException;
@@ -23,7 +25,7 @@ import java.io.IOException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class ProxmoxAgent extends AbstractCloudSlave {
+public class ProxmoxAgent extends AbstractCloudSlave implements TrackedItem {
 
     private static final Logger LOGGER = Logger.getLogger(ProxmoxAgent.class.getName());
 
@@ -32,6 +34,11 @@ public class ProxmoxAgent extends AbstractCloudSlave {
     private final String proxmoxNode;
     private final int vmId;
     private final long createdAt;
+    // cloud-stats provisioning activity this agent belongs to. Persisted (not transient) so the
+    // correlation survives a controller restart: cloud-stats persists its activities, and the
+    // reconnecting computer must still resolve to the same activity via this id. May be null for
+    // agents that opt out of tracking (TrackedItem permits a null id).
+    private final ProvisioningActivity.Id provisioningId;
     // Lifecycle settings owned by the agent (seeded from the template at provision time) so they can
     // be overridden per-agent from its config page — e.g. to keep one VM alive for diagnostics. The
     // stateless ProxmoxRetentionStrategy reads these live. volatile (not AtomicInteger): they are set
@@ -46,7 +53,8 @@ public class ProxmoxAgent extends AbstractCloudSlave {
     public ProxmoxAgent(String name, String remoteFs, int numExecutors, Node.Mode mode,
                          String labelString, ProxmoxLauncher launcher,
                          String cloudName, String templateName, String proxmoxNode,
-                         int vmId, int idleTerminationMinutes, int maxTotalUses)
+                         int vmId, int idleTerminationMinutes, int maxTotalUses,
+                         ProvisioningActivity.Id provisioningId)
             throws Descriptor.FormException, IOException {
         super(name, remoteFs, launcher);
         setNumExecutors(numExecutors);
@@ -59,12 +67,23 @@ public class ProxmoxAgent extends AbstractCloudSlave {
         this.idleTerminationMinutes = idleTerminationMinutes;
         this.maxTotalUses = maxTotalUses;
         this.createdAt = System.currentTimeMillis();
+        this.provisioningId = provisioningId;
         setRetentionStrategy(new ProxmoxRetentionStrategy());
     }
 
     @Override
     public AbstractCloudComputer<?> createComputer() {
         return new ProxmoxComputer(this);
+    }
+
+    /**
+     * The cloud-stats provisioning activity this agent belongs to, or {@code null} if it was created
+     * before the integration (untracked). cloud-stats correlates this id across the planned node,
+     * the node, and the computer to follow the agent through its provisioning phases.
+     */
+    @Override
+    public ProvisioningActivity.Id getId() {
+        return provisioningId;
     }
 
     @Override

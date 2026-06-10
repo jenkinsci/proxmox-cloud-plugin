@@ -17,6 +17,7 @@ import hudson.util.ComboBoxModel;
 import hudson.util.FormValidation;
 import hudson.util.ListBoxModel;
 import jenkins.model.Jenkins;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
 import org.jenkinsci.plugins.proxmox.api.model.CloneOptions;
 import org.jenkinsci.plugins.proxmox.api.model.ClusterNode;
@@ -102,7 +103,8 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
      * reserved by {@link ProxmoxCloud#reserveVmId()} under a short lock so concurrent provisions get
      * distinct ids; the clone/start here runs outside that lock so agents come up in parallel.
      */
-    public ProxmoxAgent provision(ProxmoxCloud cloud, TaskListener listener, int newVmId) throws Exception {
+    public ProxmoxAgent provision(ProxmoxCloud cloud, TaskListener listener, int newVmId,
+                                  ProvisioningActivity.Id activityId) throws Exception {
         var log = listener.getLogger();
         ProxmoxClient client = cloud.getClient();
 
@@ -152,7 +154,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                 vmName, getRemoteFs(), numExecutors, mode, labelString,
                 launcher,
                 cloud.name, name, node, newVmId,
-                idleTerminationMinutes, maxTotalUses);
+                idleTerminationMinutes, maxTotalUses, activityId);
     }
 
     private String derivePublicKeyFromCredential(java.io.PrintStream log) {

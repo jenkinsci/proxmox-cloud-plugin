@@ -30,7 +30,7 @@ class ProxmoxBuildListenerTest {
     private ProxmoxAgent newAgent(String name, int vmId) throws Exception {
         ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 0);
         return new ProxmoxAgent(name, "/home/jenkins", 1, Node.Mode.NORMAL, "linux",
-                launcher, "test-cloud", "test-template", "pve1", vmId, 10, 0);
+                launcher, "test-cloud", "test-template", "pve1", vmId, 10, 0, null);
     }
 
     @Test
