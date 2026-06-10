@@ -14,6 +14,7 @@ import hudson.slaves.Cloud;
 import hudson.slaves.NodeProvisioner;
 import hudson.slaves.OfflineCause;
 import hudson.util.FormValidation;
+import hudson.util.ListBoxModel;
 import hudson.util.Secret;
 import jenkins.model.Jenkins;
 import org.htmlunit.html.HtmlPage;
@@ -329,6 +330,111 @@ class ProxmoxCloudTest {
             assertEquals(FormValidation.Kind.ERROR, d.doCheckApiUrl("").kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckApiUrl("not-a-url").kind);
         }
+    }
+
+    // --- descriptor connection test + form-validation checks ---
+
+    private ProxmoxCloud.DescriptorImpl cloudDescriptor() {
+        return j.jenkins.getDescriptorByType(ProxmoxCloud.DescriptorImpl.class);
+    }
+
+    private String registerProxmoxCreds() {
+        SystemCredentialsProvider.getInstance().getCredentials().add(
+                new ProxmoxTokenCredentialsImpl(CredentialsScope.GLOBAL, "proxmox-cred", "desc",
+                        "user@pve!token", Secret.fromString("secret")));
+        return "proxmox-cred";
+    }
+
+    private String apiUrl() {
+        return "http://localhost:" + wireMock.getPort();
+    }
+
+    @Test
+    void doTestConnectionSucceeds() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/version")).willReturn(okJson("{\"data\":{\"version\":\"8.2.4\"}}")));
+        FormValidation r = cloudDescriptor().doTestConnection(apiUrl(), cred, false);
+        assertEquals(FormValidation.Kind.OK, r.kind);
+        assertTrue(r.getMessage().contains("8.2.4"));
+    }
+
+    @Test
+    void doTestConnectionRejectsTooOldVersion() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/version")).willReturn(okJson("{\"data\":{\"version\":\"7.4\"}}")));
+        assertEquals(FormValidation.Kind.ERROR, cloudDescriptor().doTestConnection(apiUrl(), cred, false).kind);
+    }
+
+    @Test
+    void doTestConnectionWarnsOnNewerVersion() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/version")).willReturn(okJson("{\"data\":{\"version\":\"10.1\"}}")));
+        assertEquals(FormValidation.Kind.WARNING, cloudDescriptor().doTestConnection(apiUrl(), cred, false).kind);
+    }
+
+    @Test
+    void doTestConnectionOkWhenVersionUnparseable() {
+        // parseMajorVersion returns 0 for a non-numeric version, so no min/max check fires.
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/version")).willReturn(okJson("{\"data\":{\"version\":\"weird\"}}")));
+        assertEquals(FormValidation.Kind.OK, cloudDescriptor().doTestConnection(apiUrl(), cred, false).kind);
+    }
+
+    @Test
+    void doTestConnectionReportsAuthFailure() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/version")).willReturn(aResponse().withStatus(401).withBody("no")));
+        FormValidation r = cloudDescriptor().doTestConnection(apiUrl(), cred, false);
+        assertEquals(FormValidation.Kind.ERROR, r.kind);
+        assertTrue(r.getMessage().contains("user@pve!token"));
+    }
+
+    @Test
+    void doTestConnectionReportsConnectionFailure() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/version")).willReturn(aResponse().withStatus(500).withBody("boom")));
+        FormValidation r = cloudDescriptor().doTestConnection(apiUrl(), cred, false);
+        assertEquals(FormValidation.Kind.ERROR, r.kind);
+        assertTrue(r.getMessage().contains("Connection failed"));
+    }
+
+    @Test
+    void doTestConnectionRequiresUrlAndCredentials() {
+        ProxmoxCloud.DescriptorImpl d = cloudDescriptor();
+        assertEquals(FormValidation.Kind.ERROR, d.doTestConnection("", "x", false).kind);
+        assertEquals(FormValidation.Kind.ERROR, d.doTestConnection("http://x", "", false).kind);
+    }
+
+    @Test
+    void doTestConnectionReportsMissingCredential() {
+        FormValidation r = cloudDescriptor().doTestConnection(apiUrl(), "nope", false);
+        assertEquals(FormValidation.Kind.ERROR, r.kind);
+        assertTrue(r.getMessage().contains("Credentials not found"));
+    }
+
+    @Test
+    void doCheckStartVmIdEnforcesReservedRange() {
+        ProxmoxCloud.DescriptorImpl d = cloudDescriptor();
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckStartVmId(-1).kind);
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckStartVmId(50).kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckStartVmId(0).kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckStartVmId(300).kind);
+    }
+
+    @Test
+    void doCheckOrphanCleanupPeriodsEnforceMinimums() {
+        ProxmoxCloud.DescriptorImpl d = cloudDescriptor();
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckOrphanCleanupGracePeriodSeconds(0).kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckOrphanCleanupGracePeriodSeconds(1).kind);
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckOrphanCleanupPeriodSeconds(29).kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckOrphanCleanupPeriodSeconds(30).kind);
+    }
+
+    @Test
+    void doFillCredentialsIdItemsListsProxmoxCredential() {
+        String cred = registerProxmoxCreds();
+        ListBoxModel m = cloudDescriptor().doFillCredentialsIdItems();
+        assertTrue(m.stream().anyMatch(o -> cred.equals(o.value)));
     }
 
     private static void setOfflineCauseTimestamp(OfflineCause cause, long timestampMs) throws Exception {

@@ -1,5 +1,9 @@
 package org.jenkinsci.plugins.proxmox;
 
+import com.cloudbees.plugins.credentials.CredentialsScope;
+import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
+import com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import hudson.model.Label;
 import hudson.model.Node;
 import hudson.model.User;
@@ -8,15 +12,20 @@ import hudson.security.ACLContext;
 import hudson.util.ComboBoxModel;
 import hudson.util.FormValidation;
 import hudson.util.ListBoxModel;
+import hudson.util.Secret;
 import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
+import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
 import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.*;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.junit.jupiter.api.Assertions.*;
 
 @WithJenkins
@@ -238,5 +247,143 @@ class ProxmoxTemplateTest {
             assertEquals(FormValidation.Kind.ERROR, d.doCheckNode("").kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckJavaMajorVersion("", "OPENJDK").kind);
         }
+    }
+
+    // --- descriptor fill/check methods backed by the Proxmox API (WireMock) ---
+    // An unsecured JenkinsRule treats everyone as ADMINISTER, so the permission guard passes and these
+    // exercise the happy/error paths the dedicated permission tests above do not.
+
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .configureStaticDsl(true)
+            .build();
+
+    private String apiUrl() {
+        return "http://localhost:" + wireMock.getPort();
+    }
+
+    private String registerCreds() {
+        SystemCredentialsProvider.getInstance().getCredentials().add(
+                new ProxmoxTokenCredentialsImpl(CredentialsScope.GLOBAL, "proxmox-cred", "desc",
+                        "user@pve!token", Secret.fromString("secret")));
+        return "proxmox-cred";
+    }
+
+    private ProxmoxTemplate.DescriptorImpl descriptor() {
+        return j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
+    }
+
+    @Test
+    void doFillNodeItemsListsNodesAndMarksOffline() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes")).willReturn(okJson("{\"data\":["
+                + "{\"node\":\"pve1\",\"status\":\"online\"},"
+                + "{\"node\":\"pve2\",\"status\":\"offline\"}]}")));
+        ListBoxModel m = descriptor().doFillNodeItems(apiUrl(), cred, false);
+        assertEquals(3, m.size()); // blank + two nodes
+        assertTrue(m.stream().anyMatch(o -> o.value.equals("pve1") && o.name.equals("pve1")));
+        assertTrue(m.stream().anyMatch(o -> o.value.equals("pve2") && o.name.equals("pve2 (offline)")));
+    }
+
+    @Test
+    void doFillNodeItemsReportsApiError() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes")).willReturn(aResponse().withStatus(500).withBody("boom")));
+        ListBoxModel m = descriptor().doFillNodeItems(apiUrl(), cred, false);
+        assertTrue(m.stream().anyMatch(o -> o.name.startsWith("(API error")));
+    }
+
+    @Test
+    void doFillNodeItemsPlaceholderWhenNoConnection() {
+        ListBoxModel m = descriptor().doFillNodeItems("", "", false);
+        assertEquals(1, m.size());
+        assertEquals("(configure API connection first)", m.get(0).name);
+    }
+
+    @Test
+    void doFillTemplateVmIdItemsPromptsForNodeWhenBlank() {
+        ListBoxModel m = descriptor().doFillTemplateVmIdItems("", apiUrl(), registerCreds(), false);
+        assertEquals(1, m.size());
+        assertEquals("(select a node first)", m.get(0).name);
+    }
+
+    @Test
+    void doFillTemplateVmIdItemsListsTemplates() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu")).willReturn(okJson("{\"data\":["
+                + "{\"vmid\":9000,\"name\":\"ubuntu\",\"status\":\"stopped\",\"template\":1}]}")));
+        ListBoxModel m = descriptor().doFillTemplateVmIdItems("pve1", apiUrl(), cred, false);
+        assertTrue(m.stream().anyMatch(o -> o.value.equals("9000") && o.name.contains("ubuntu")));
+    }
+
+    @Test
+    void doFillTemplateVmIdItemsReportsNoTemplates() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu")).willReturn(okJson("{\"data\":[]}")));
+        ListBoxModel m = descriptor().doFillTemplateVmIdItems("pve1", apiUrl(), cred, false);
+        assertTrue(m.stream().anyMatch(o -> o.name.contains("no templates found")));
+    }
+
+    @Test
+    void doFillTargetStorageItemsListsPools() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/storage")).willReturn(okJson("{\"data\":["
+                + "{\"storage\":\"local-lvm\",\"type\":\"lvmthin\",\"avail\":123}]}")));
+        ListBoxModel m = descriptor().doFillTargetStorageItems("pve1", apiUrl(), cred, false);
+        assertEquals("(inherit from template)", m.get(0).name);
+        assertTrue(m.stream().anyMatch(o -> o.value.equals("local-lvm") && o.name.contains("lvmthin")));
+    }
+
+    @Test
+    void doFillNetworkBridgeItemsListsOnlyBridges() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/network")).willReturn(okJson("{\"data\":["
+                + "{\"iface\":\"vmbr0\",\"type\":\"bridge\",\"active\":1},"
+                + "{\"iface\":\"eno1\",\"type\":\"eth\",\"active\":1}]}")));
+        ListBoxModel m = descriptor().doFillNetworkBridgeItems("pve1", apiUrl(), cred, false);
+        assertTrue(m.stream().anyMatch(o -> o.value.equals("vmbr0")));
+        assertFalse(m.stream().anyMatch(o -> o.value.equals("eno1")));
+    }
+
+    @Test
+    void doFillTargetPoolItemsListsPoolsWithOptionalComment() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/pools")).willReturn(okJson("{\"data\":["
+                + "{\"poolid\":\"prod\",\"comment\":\"Production\"},"
+                + "{\"poolid\":\"bare\"}]}")));
+        ListBoxModel m = descriptor().doFillTargetPoolItems(apiUrl(), cred, false);
+        assertEquals("(none)", m.get(0).name);
+        assertTrue(m.stream().anyMatch(o -> o.value.equals("prod") && o.name.contains("Production")));
+        assertTrue(m.stream().anyMatch(o -> o.value.equals("bare") && o.name.equals("bare")));
+    }
+
+    @Test
+    void doFillTargetStorageItemsToleratesApiError() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/storage")).willReturn(aResponse().withStatus(500)));
+        ListBoxModel m = descriptor().doFillTargetStorageItems("pve1", apiUrl(), cred, false);
+        // The API error is logged and swallowed; the inherit placeholder still renders.
+        assertEquals(1, m.size());
+        assertEquals("(inherit from template)", m.get(0).name);
+    }
+
+    @Test
+    void doFillCredentialsIdItemsListsSshCredential() throws Exception {
+        // The template's SSH dropdown lists StandardUsernameCredentials (the agent connection), not
+        // the Proxmox API token credential the cloud uses.
+        SystemCredentialsProvider.getInstance().getCredentials().add(
+                new UsernamePasswordCredentialsImpl(CredentialsScope.GLOBAL, "ssh-cred", "desc", "ubuntu", "secret"));
+        ListBoxModel m = descriptor().doFillCredentialsIdItems();
+        assertTrue(m.stream().anyMatch(o -> o.value.equals("ssh-cred")));
+        assertTrue(m.stream().anyMatch(o -> o.name.equals("- none -")));
+    }
+
+    @Test
+    void doCheckTemplateVmIdRejectsNonPositive() {
+        ProxmoxTemplate.DescriptorImpl d = descriptor();
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0).kind);
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(-5).kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(9000).kind);
     }
 }
