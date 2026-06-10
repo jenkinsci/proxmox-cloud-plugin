@@ -12,6 +12,9 @@ import hudson.security.ACL;
 import hudson.slaves.ComputerLauncher;
 import hudson.slaves.SlaveComputer;
 import jenkins.model.Jenkins;
+import org.jenkinsci.plugins.cloudstats.CloudStatistics;
+import org.jenkinsci.plugins.cloudstats.PhaseExecutionAttachment;
+import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
 import org.jenkinsci.plugins.proxmox.api.model.NetworkInterface;
@@ -68,18 +71,45 @@ public class ProxmoxLauncher extends ComputerLauncher {
             throw new IOException("Agent node is null");
         }
 
-        String host = resolveIp(agent, log);
-        log.println("[Proxmox] Resolved IP: " + host);
+        try {
+            String host = resolveIp(agent, log);
+            log.println("[Proxmox] Resolved IP: " + host);
 
-        waitForSsh(host, log);
+            waitForSsh(host, log);
 
-        if (javaDistribution != JavaDistribution.NONE) {
-            installJava(host, log);
+            if (javaDistribution != JavaDistribution.NONE) {
+                installJava(host, log);
+            }
+
+            delegate = new SSHLauncher(host, SSH_PORT, sshCredentialsId);
+            configureDelegate(delegate);
+            delegate.launch(computer, listener);
+        } catch (IOException | InterruptedException | RuntimeException e) {
+            recordLaunchFailure(agent, e);
+            throw e;
         }
+    }
 
-        delegate = new SSHLauncher(host, SSH_PORT, sshCredentialsId);
-        configureDelegate(delegate);
-        delegate.launch(computer, listener);
+    /**
+     * Record a launch failure against the agent's cloud-stats activity (when tracked) so the cause is
+     * visible under Manage Jenkins -&gt; Cloud Statistics. cloud-stats' own {@code onLaunchFailure} hook
+     * does not attach any detail, and a failed agent is reaped soon after (taking its launch log with
+     * it), so the activity is the only durable record of why the launch failed. The attachment's FAIL
+     * status marks the activity completed. Best-effort: a null id (untracked) or missing activity is a
+     * no-op. Package-private for unit testing.
+     */
+    void recordLaunchFailure(ProxmoxAgent agent, Throwable cause) {
+        ProvisioningActivity.Id id = agent.getId();
+        if (id == null) {
+            return;
+        }
+        CloudStatistics stats = CloudStatistics.get();
+        ProvisioningActivity activity = stats.getActivityFor(id);
+        if (activity == null) {
+            return;
+        }
+        stats.attach(activity, activity.getCurrentPhase(),
+                new PhaseExecutionAttachment.ExceptionAttachment(ProvisioningActivity.Status.FAIL, cause));
     }
 
     /**
