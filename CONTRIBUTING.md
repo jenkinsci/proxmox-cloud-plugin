@@ -23,6 +23,8 @@ Tests use JUnit 5 (Jupiter) with the Jenkins test harness and WireMock for the P
 
 ## Pull requests
 
+Pull requests are only considered after an issue has been filed and agreement has been reached with the maintainers that it describes a confirmed bug or accepted feature. PRs that skip this step will not be reviewed or merged.
+
 - Branch from `main` and open the PR against `main`.
 - Keep each PR to one logical change.
 - Match the surrounding code style. `mvn verify` runs Spotless, SpotBugs, and the enforcer rules, so run it before pushing.
