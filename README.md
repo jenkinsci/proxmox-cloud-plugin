@@ -544,6 +544,68 @@ unwelcome. It also runs happily alongside the EC2 plugin. Jenkins supports multi
 once, so you can keep steady or sensitive workloads on local Proxmox capacity and burst to EC2 for
 spikes, routing jobs to either by label.
 
+## Windows Agents
+
+Tested on Windows Server 2022. Other versions should work with the same steps; the main variable
+is VirtIO driver availability and the exact path of the VirtIO/QEMU Guest Agent installer.
+
+When OS Type is set to **Microsoft Windows** in a template, the following fields are hidden
+because they are Linux/cloud-init concepts that have no effect on Windows VMs: 
+- VM Username
+- Java Distribution
+- Java Major Version
+- IP Configuration
+- Nameserver
+- Search Domain.
+
+### Creating the Proxmox template
+
+1. Create a new VM in Proxmox (OVMF/UEFI firmware, TPM 2.0, VirtIO SCSI controller).
+2. Boot from a Windows Server ISO. Install VirtIO drivers during setup (from the VirtIO ISO,
+   attached as a second CD-ROM).
+3. After installation, run the VirtIO Guest Tools installer to get the QEMU Guest Agent
+   component. Set the "QEMU Guest Agent" service to start automatically.
+4. Enable the guest agent for the VM in Proxmox: VM settings, Options, QEMU Guest Agent.
+   Or via CLI: `qm set <vmid> --agent enabled=1`. This is required for IP discovery.
+5. Install OpenSSH Server: Settings, Optional Features, Add a Feature, OpenSSH Server.
+   Set the `sshd` service to start automatically.
+6. Create a local `jenkins` user account.
+7. Place the SSH public key in `C:\Users\jenkins\.ssh\authorized_keys`.
+8. In `C:\ProgramData\ssh\sshd_config`, set `AuthorizedKeysFile .ssh/authorized_keys`
+   and `StrictModes no`. Restart the `sshd` service.
+9. Install Java 21 or later (Eclipse Temurin or similar) and verify `java -version` works
+   in a new PowerShell window (confirming it is on the system PATH for SSH sessions).
+10. Run sysprep to generalise the image: open `C:\Windows\System32\Sysprep\sysprep.exe`,
+    select "Enter System Out-of-Box Experience (OOBE)", check "Generalize", set shutdown
+    option to Shutdown. This resets the hostname and SID on each clone.
+11. Once the VM has shut down, convert it to a Proxmox template (right-click, Convert to
+    Template).
+
+**Profile path note.** On first boot of a clone, Windows registers the `jenkins` user
+profile at `C:\Users\jenkins.<ORIGINAL-HOSTNAME>`, where `<ORIGINAL-HOSTNAME>` is the
+hostname the template VM had before sysprep. This path is stable across clones because
+Windows maps SIDs to profile paths and sysprep preserves the SID assignment. Use this path
+as the base for Remote FS Root in the Jenkins template config.
+
+### Configuring the Jenkins template
+
+| Field | Value |
+|---|---|
+| OS Type | Microsoft Windows |
+| Template VM ID | ID of your Windows template VM |
+| SSH Credentials | Username `jenkins`, private key matching `authorized_keys` |
+| Remote FS Root | Required. Full path to the agent work directory, e.g. `C:\Users\jenkins.<ORIGINAL-HOSTNAME>\agent` |
+| Java Distribution | None (Java is pre-installed in the template; auto-install uses apt-get and is Linux-only) |
+| Java Path | `java` if on the system PATH, or the full path to `java.exe` |
+| Startup Wait (seconds) | 300 is recommended. Windows sysprep finalization takes longer than a Linux cloud-init boot. |
+
+### Notes
+
+Windows OpenSSH accepts TCP connections a few seconds before its auth subsystem is ready
+during first-boot sysprep finalization. The plugin handles this automatically via an
+auth-retry loop after the port-open check; no configuration is needed, but keep Startup Wait
+high enough to cover the full boot time.
+
 ## Known limitations
 
 - **QEMU only.** LXC containers are not supported.

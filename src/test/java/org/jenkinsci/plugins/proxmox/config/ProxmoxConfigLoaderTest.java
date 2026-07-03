@@ -552,4 +552,61 @@ class ProxmoxConfigLoaderTest {
         assertEquals(1, result.get("a"));
         assertEquals(2, result.get("b"));
     }
+
+    // ---- osType tests ----
+
+    @Test
+    void createProxmoxTemplate_osTypeWindows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "win-builder");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9001);
+        config.put("labelString", "windows");
+        config.put("numExecutors", 1);
+        config.put("osType", "WINDOWS");
+        config.put("remoteFs", "C:\\Users\\jenkins\\agent");
+
+        ProxmoxTemplate template = loader.createProxmoxTemplate(config);
+
+        assertEquals(OsType.WINDOWS, template.getOsType());
+        assertEquals("C:\\Users\\jenkins\\agent", template.getRemoteFs());
+    }
+
+    @Test
+    void createProxmoxTemplate_windowsWithoutRemoteFsThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "win-builder");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9001);
+        config.put("labelString", "windows");
+        config.put("numExecutors", 1);
+        config.put("osType", "WINDOWS");
+
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(config));
+    }
+
+    @Test
+    void processYamlAndPersistConfig_windowsWithoutRemoteFsIsAnError() throws Exception {
+        Yaml yaml = new Yaml();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> yamlData = yaml.load(
+                "cloudConfigurations:\n"
+                + "  testCluster:\n"
+                + "    name: \"Test Cloud\"\n"
+                + "agentConfigurations:\n"
+                + "  win-builder:\n"
+                + "    cloudIds: [\"testCluster\"]\n"
+                + "    node: \"pve1\"\n"
+                + "    name: \"win-builder\"\n"
+                + "    labelString: \"windows\"\n"
+                + "    templateVmId: 9001\n"
+                + "    osType: WINDOWS\n");
+
+        ProxmoxSyncResult result = loader.processYamlAndPersistConfig(yamlData, j.jenkins);
+
+        assertFalse(result.isSuccess());
+        assertFalse(result.errors().isEmpty());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("Remote FS Root")),
+                "Error should mention Remote FS Root, but errors were: " + result.errors());
+    }
 }

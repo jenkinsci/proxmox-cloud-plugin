@@ -1,4 +1,5 @@
 <div>
     Working directory on the agent for Jenkins builds. Must be writable by the SSH user.
-    Automatically derived from the VM Username field (e.g. /home/ubuntu/agent). Override to use a custom path.
+    For Linux agents, this is automatically derived from the VM Username field (e.g. /home/ubuntu/agent).
+    For Windows agents, this field is required and must be set explicitly (e.g. C:\Users\jenkins\agent).
 </div>

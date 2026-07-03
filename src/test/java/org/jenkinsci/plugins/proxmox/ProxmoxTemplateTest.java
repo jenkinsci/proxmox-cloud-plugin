@@ -17,6 +17,7 @@ import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.proxmox.api.model.VmConfig;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
+import org.jenkinsci.plugins.proxmox.config.OsType;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -256,10 +257,12 @@ class ProxmoxTemplateTest {
         try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
             assertEquals(FormValidation.Kind.OK, d.doCheckNode("").kind);
             assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("", "OPENJDK").kind);
+            assertEquals(FormValidation.Kind.OK, d.doCheckRemoteFs("", OsType.WINDOWS.name()).kind);
         }
         try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
             assertEquals(FormValidation.Kind.ERROR, d.doCheckNode("").kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckJavaMajorVersion("", "OPENJDK").kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckRemoteFs("", OsType.WINDOWS.name()).kind);
         }
     }
 
@@ -491,5 +494,86 @@ class ProxmoxTemplateTest {
         assertEquals("ubuntu", cfg.ciuser());
         assertEquals("ssh-ed25519 AAA", cfg.sshkeys());
         assertEquals("ip=10.0.0.5/24", cfg.ipconfig0());
+    }
+
+    // --- OS Type ---
+
+    @Test
+    void osTypeDefaultsToLinux() {
+        ProxmoxTemplate t = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        assertEquals(OsType.LINUX, t.getOsType());
+    }
+
+    @Test
+    void osTypeSetterRoundTrips() {
+        ProxmoxTemplate t = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        t.setOsType(OsType.WINDOWS);
+        assertEquals(OsType.WINDOWS, t.getOsType());
+        t.setOsType(null);
+        assertEquals(OsType.LINUX, t.getOsType(), "null should coerce to LINUX");
+    }
+
+    @Test
+    void buildVmConfigOmitsLinuxFieldsForWindows() {
+        ProxmoxTemplate t = new ProxmoxTemplate("t", "pve1", 9000, "windows", 1);
+        t.setOsType(OsType.WINDOWS);
+        t.setCiUser("admin");
+        t.setIpConfig("ip=dhcp");
+        t.setNameserver("8.8.8.8");
+        t.setSearchDomain("example.com");
+        VmConfig cfg = t.buildVmConfig("ssh-ed25519 AAA");
+        assertNull(cfg, "Windows with no cores/memory and only Linux-only fields should return null");
+
+        t.setCores(4);
+        cfg = t.buildVmConfig("ssh-ed25519 AAA");
+        assertNotNull(cfg, "Windows with cores set should return a config");
+        assertNull(cfg.ciuser(), "ciUser must not be passed to Proxmox for Windows");
+        assertNull(cfg.sshkeys(), "sshkeys must not be passed to Proxmox for Windows");
+        assertNull(cfg.ipconfig0(), "ipConfig must not be passed to Proxmox for Windows");
+        assertNull(cfg.nameserver(), "nameserver must not be passed to Proxmox for Windows");
+        assertNull(cfg.searchdomain(), "searchDomain must not be passed to Proxmox for Windows");
+        assertEquals(4, cfg.cores().intValue(), "cores should still be set for Windows");
+    }
+
+    @Test
+    void windowsTemplateRequiresRemoteFsOnFormSubmit() throws Exception {
+        ProxmoxTemplate withFs = new ProxmoxTemplate("w", "pve1", 9001, "windows", 1);
+        withFs.setOsType(OsType.WINDOWS);
+        withFs.setRemoteFs("C:\\Users\\jenkins\\agent");
+        ProxmoxTemplate.validateWindowsRemoteFs(withFs); // must not throw
+
+        ProxmoxTemplate withoutFs = new ProxmoxTemplate("w", "pve1", 9001, "windows", 1);
+        withoutFs.setOsType(OsType.WINDOWS);
+        assertThrows(hudson.model.Descriptor.FormException.class,
+                () -> ProxmoxTemplate.validateWindowsRemoteFs(withoutFs));
+    }
+
+    @Test
+    void doCheckRemoteFsOkForLinux() {
+        ProxmoxTemplate.DescriptorImpl d = new ProxmoxTemplate.DescriptorImpl();
+        assertEquals(hudson.util.FormValidation.Kind.OK,
+                d.doCheckRemoteFs("", OsType.LINUX.name()).kind);
+        assertEquals(hudson.util.FormValidation.Kind.OK,
+                d.doCheckRemoteFs(null, OsType.LINUX.name()).kind);
+        assertEquals(hudson.util.FormValidation.Kind.OK,
+                d.doCheckRemoteFs("/home/ubuntu/agent", OsType.LINUX.name()).kind);
+    }
+
+    @Test
+    void doCheckRemoteFsErrorForWindowsWhenBlank() {
+        ProxmoxTemplate.DescriptorImpl d = new ProxmoxTemplate.DescriptorImpl();
+        assertEquals(hudson.util.FormValidation.Kind.ERROR,
+                d.doCheckRemoteFs("", OsType.WINDOWS.name()).kind);
+        assertEquals(hudson.util.FormValidation.Kind.ERROR,
+                d.doCheckRemoteFs(null, OsType.WINDOWS.name()).kind);
+        assertEquals(hudson.util.FormValidation.Kind.ERROR,
+                d.doCheckRemoteFs("   ", OsType.WINDOWS.name()).kind);
+    }
+
+    @Test
+    void doCheckRemoteFsOkForWindowsWhenSet() {
+        ProxmoxTemplate.DescriptorImpl d = new ProxmoxTemplate.DescriptorImpl();
+        assertEquals(hudson.util.FormValidation.Kind.OK,
+                d.doCheckRemoteFs("C:\\Users\\jenkins\\agent", OsType.WINDOWS.name()).kind);
     }
 }
