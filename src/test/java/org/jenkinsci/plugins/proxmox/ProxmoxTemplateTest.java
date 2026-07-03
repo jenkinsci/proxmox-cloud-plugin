@@ -148,6 +148,19 @@ class ProxmoxTemplateTest {
     }
 
     @Test
+    void ciUserSetterStoresNullForBlankInput() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
+        template.setCiUser("ubuntu");
+        assertEquals("ubuntu", template.getCiUser());
+        template.setCiUser("");
+        assertNull(template.getCiUser());
+        template.setCiUser("  ");
+        assertNull(template.getCiUser());
+        template.setCiUser(null);
+        assertNull(template.getCiUser());
+    }
+
+    @Test
     void javaDistributionSetterDefaultsNullToNone() {
         ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
         template.setJavaDistribution(JavaDistribution.OPENJDK);

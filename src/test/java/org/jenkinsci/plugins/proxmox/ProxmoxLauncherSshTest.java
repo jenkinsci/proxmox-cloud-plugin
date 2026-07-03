@@ -214,4 +214,59 @@ class ProxmoxLauncherSshTest {
         assertThrows(ProxmoxException.class,
                 () -> launcher(JavaDistribution.NONE).waitForSsh("nonexistent.invalid.example", nullLog()));
     }
+
+    // --- waitForSshReady ---
+
+    @Test
+    void waitForSshReadySucceedsOnFirstAttempt() throws Exception {
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcher(JavaDistribution.NONE);
+        launcher.setSshConnectionFactory(fakeFactory(true, 0));
+        launcher.waitForSshReady("1.2.3.4", nullLog());
+    }
+
+    @Test
+    void waitForSshReadyRetriesOnConnectionReset() throws Exception {
+        registerPasswordCredential();
+        // Needs budget > 2 s so the sleep between retries doesn't exhaust the deadline.
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 10, null, JavaDistribution.NONE, 21);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        launcher.setSshConnectionFactory((host, port) -> {
+            if (calls.getAndIncrement() == 0) {
+                throw new java.io.IOException("Connection reset");
+            }
+            return new ProxmoxLauncher.SshConnection() {
+                @Override public boolean authenticateWithPublicKey(String u, char[] k) { return true; }
+                @Override public boolean authenticateWithPassword(String u, String p) { return true; }
+                @Override public ProxmoxLauncher.SshExecResult exec(String c, int t) { return new ProxmoxLauncher.SshExecResult("", "", 0); }
+                @Override public void close() {}
+            };
+        });
+        launcher.waitForSshReady("1.2.3.4", nullLog());
+        assertEquals(2, calls.get(), "should have tried twice: first failed, second succeeded");
+    }
+
+    @Test
+    void waitForSshReadyThrowsImmediatelyOnAuthRejected() throws Exception {
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcher(JavaDistribution.NONE);
+        launcher.setSshConnectionFactory(fakeFactory(false, 0));
+        assertThrows(java.io.IOException.class,
+                () -> launcher.waitForSshReady("1.2.3.4", nullLog()),
+                "should fail immediately when auth is explicitly rejected, not retry until timeout");
+    }
+
+    @Test
+    void waitForSshReadyThrowsWhenCredentialMissing() {
+        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null, JavaDistribution.NONE, 21);
+        assertThrows(java.io.IOException.class, () -> launcher.waitForSshReady("1.2.3.4", nullLog()));
+    }
+
+    @Test
+    void waitForSshReadyTimesOutWhenAlwaysConnectionReset() throws Exception {
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcher(JavaDistribution.NONE);
+        launcher.setSshConnectionFactory((host, port) -> { throw new java.io.IOException("Connection reset"); });
+        assertThrows(ProxmoxException.class, () -> launcher.waitForSshReady("1.2.3.4", nullLog()));
+    }
 }

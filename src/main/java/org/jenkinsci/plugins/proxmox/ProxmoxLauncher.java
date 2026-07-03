@@ -80,6 +80,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
             log.println("[Proxmox] Resolved IP: " + host);
 
             waitForSsh(host, log);
+            waitForSshReady(host, log);
 
             if (javaDistribution != JavaDistribution.NONE) {
                 installJava(host, log);
@@ -373,6 +374,54 @@ public class ProxmoxLauncher extends ComputerLauncher {
 
         throw new ProxmoxException("No IP for VM " + agent.getVmId()
                 + " within " + startupWaitSeconds + "s");
+    }
+
+    /**
+     * Waits until a full SSH auth handshake succeeds on {@code host}. Called after
+     * {@link #waitForSsh} (which only checks TCP reachability) because some SSH servers — notably
+     * Windows OpenSSH on first boot — accept TCP connections before their auth subsystem is ready,
+     * causing the connection to reset mid-handshake. Retries on any connection-level failure;
+     * throws immediately if the server explicitly rejects the credentials, since retrying won't help.
+     */
+    // Package-private for unit testing.
+    void waitForSshReady(String host, PrintStream log) throws IOException, InterruptedException {
+        StandardUsernameCredentials creds = CredentialsMatchers.firstOrNull(
+                CredentialsProvider.lookupCredentialsInItemGroup(
+                        StandardUsernameCredentials.class, Jenkins.get(), null,
+                        Collections.emptyList()),
+                CredentialsMatchers.withId(sshCredentialsId));
+        if (creds == null) {
+            throw new IOException("SSH credentials not found: " + sshCredentialsId);
+        }
+
+        log.println("[Proxmox] Verifying SSH auth on " + host + "...");
+        long deadline = System.currentTimeMillis() + (long) startupWaitSeconds * 1000;
+
+        IOException lastError = null;
+        while (System.currentTimeMillis() < deadline) {
+            try (SshConnection conn = sshConnectionFactory().open(host, SSH_PORT)) {
+                boolean ok = authenticate(conn, creds);
+                if (!ok) {
+                    throw new IOException("SSH authentication rejected for user " + creds.getUsername());
+                }
+                log.println("[Proxmox] SSH auth verified");
+                return;
+            } catch (IOException e) {
+                String msg = e.getMessage();
+                if (msg != null && msg.startsWith("SSH authentication rejected")
+                        || msg != null && msg.startsWith("Unsupported credential type")) {
+                    throw e;
+                }
+                lastError = e;
+                LOGGER.log(Level.FINE, "SSH auth not ready on " + host, e);
+                log.println("[Proxmox] SSH not ready yet, retrying...");
+            }
+            Thread.sleep(2000);
+        }
+
+        throw new ProxmoxException("SSH auth not ready on " + host
+                + " within " + startupWaitSeconds + "s"
+                + (lastError != null ? ": " + lastError.getMessage() : ""));
     }
 
     // Package-private for unit testing.
