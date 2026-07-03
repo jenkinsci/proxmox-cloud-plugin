@@ -264,6 +264,7 @@ class ProxmoxTemplateTest {
             assertEquals(FormValidation.Kind.OK, d.doCheckTemplateNameRegex("[unclosed", "pve1", "", "", false).kind);
             assertEquals(FormValidation.Kind.OK, d.doCheckTemplateTag("", "pve1", "", "", false).kind);
             assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(0, "STATIC_ID").kind);
+            assertEquals(FormValidation.Kind.OK, d.doCheckInstanceMin(-1, 0).kind);
         }
         try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
             assertEquals(FormValidation.Kind.ERROR, d.doCheckNode("").kind);
@@ -272,6 +273,7 @@ class ProxmoxTemplateTest {
             assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateNameRegex("[unclosed", "pve1", "", "", false).kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateTag("", "pve1", "", "", false).kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0, "STATIC_ID").kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckInstanceMin(-1, 0).kind);
         }
     }
 

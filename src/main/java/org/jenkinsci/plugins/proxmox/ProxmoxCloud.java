@@ -558,6 +558,9 @@ public class ProxmoxCloud extends Cloud {
 
         @POST
         public FormValidation doCheckStartVmId(@QueryParameter int value) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
             if (value < 0) {
                 return FormValidation.error("Must be non-negative (0 = default)");
             }
@@ -569,6 +572,9 @@ public class ProxmoxCloud extends Cloud {
 
         @POST
         public FormValidation doCheckOrphanCleanupGracePeriodSeconds(@QueryParameter int value) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
             if (value < 1) {
                 return FormValidation.error("Must be at least 1 second");
             }
@@ -577,6 +583,9 @@ public class ProxmoxCloud extends Cloud {
 
         @POST
         public FormValidation doCheckOrphanCleanupPeriodSeconds(@QueryParameter int value) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
             if (value < 30) {
                 return FormValidation.error("Must be at least 30 seconds");
             }

@@ -790,6 +790,9 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
 
         @POST
         public FormValidation doCheckInstanceMin(@QueryParameter int value, @QueryParameter int instanceCap) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
             if (value < 0) {
                 return FormValidation.error("Must be non-negative");
             }
