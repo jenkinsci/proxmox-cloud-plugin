@@ -363,6 +363,15 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         }
     }
 
+    static void validateWindowsJavaDistribution(ProxmoxTemplate template) throws Descriptor.FormException {
+        if (template.getOsType() == OsType.WINDOWS
+                && template.getJavaDistribution() != JavaDistribution.NONE) {
+            throw new Descriptor.FormException(
+                    "Java Distribution must be None for Windows agents (Java auto-install is Linux-only)",
+                    "javaDistribution");
+        }
+    }
+
     @Extension
     public static class DescriptorImpl extends Descriptor<ProxmoxTemplate> {
 
@@ -401,6 +410,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             }
             if (template != null) {
                 validateWindowsRemoteFs(template);
+                validateWindowsJavaDistribution(template);
             }
             return template;
         }

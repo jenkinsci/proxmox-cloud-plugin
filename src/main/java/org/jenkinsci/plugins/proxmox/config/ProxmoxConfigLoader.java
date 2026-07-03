@@ -289,6 +289,12 @@ public class ProxmoxConfigLoader {
             throw new IllegalArgumentException(
                     "Template '" + template.getName() + "': Remote FS Root is required for Windows agents");
         }
+        if (template.getOsType() == OsType.WINDOWS
+                && template.getJavaDistribution() != JavaDistribution.NONE) {
+            throw new IllegalArgumentException(
+                    "Template '" + template.getName()
+                            + "': Java Distribution must be NONE for Windows agents (Java auto-install is Linux-only)");
+        }
 
         return template;
     }

@@ -549,6 +549,25 @@ class ProxmoxTemplateTest {
     }
 
     @Test
+    void windowsTemplateRequiresJavaDistributionNoneOnFormSubmit() throws Exception {
+        ProxmoxTemplate windowsNone = new ProxmoxTemplate("w", "pve1", 9001, "windows", 1);
+        windowsNone.setOsType(OsType.WINDOWS);
+        windowsNone.setRemoteFs("C:\\Users\\jenkins\\agent");
+        ProxmoxTemplate.validateWindowsJavaDistribution(windowsNone); // NONE default; must not throw
+
+        ProxmoxTemplate linuxInstall = new ProxmoxTemplate("l", "pve1", 9000, "linux", 1);
+        linuxInstall.setJavaDistribution(JavaDistribution.OPENJDK);
+        ProxmoxTemplate.validateWindowsJavaDistribution(linuxInstall); // Linux may install; must not throw
+
+        ProxmoxTemplate windowsInstall = new ProxmoxTemplate("w", "pve1", 9001, "windows", 1);
+        windowsInstall.setOsType(OsType.WINDOWS);
+        windowsInstall.setRemoteFs("C:\\Users\\jenkins\\agent");
+        windowsInstall.setJavaDistribution(JavaDistribution.OPENJDK);
+        assertThrows(hudson.model.Descriptor.FormException.class,
+                () -> ProxmoxTemplate.validateWindowsJavaDistribution(windowsInstall));
+    }
+
+    @Test
     void doCheckRemoteFsOkForLinux() {
         ProxmoxTemplate.DescriptorImpl d = new ProxmoxTemplate.DescriptorImpl();
         assertEquals(hudson.util.FormValidation.Kind.OK,

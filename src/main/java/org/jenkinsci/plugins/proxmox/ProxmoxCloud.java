@@ -470,6 +470,7 @@ public class ProxmoxCloud extends Cloud {
                 validateTemplateMinimums(cloud.getTemplates());
                 for (ProxmoxTemplate t : cloud.getTemplates()) {
                     ProxmoxTemplate.validateWindowsRemoteFs(t);
+                    ProxmoxTemplate.validateWindowsJavaDistribution(t);
                 }
                 cloud.setLastConfigTimestamp(System.currentTimeMillis());
             }
