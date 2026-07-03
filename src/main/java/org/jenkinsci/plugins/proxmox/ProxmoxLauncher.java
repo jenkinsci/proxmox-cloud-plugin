@@ -416,7 +416,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
                 LOGGER.log(Level.FINE, "SSH auth not ready on " + host, e);
                 log.println("[Proxmox] SSH not ready yet, retrying...");
             }
-            Thread.sleep(5000);
+            Thread.sleep(2000);
         }
 
         throw new ProxmoxException("SSH auth not ready on " + host

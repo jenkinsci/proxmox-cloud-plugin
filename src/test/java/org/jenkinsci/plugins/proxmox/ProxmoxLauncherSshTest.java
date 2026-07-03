@@ -228,7 +228,7 @@ class ProxmoxLauncherSshTest {
     @Test
     void waitForSshReadyRetriesOnConnectionReset() throws Exception {
         registerPasswordCredential();
-        // Needs budget > 5 s so the sleep between retries doesn't exhaust the deadline.
+        // Needs budget > 2 s so the sleep between retries doesn't exhaust the deadline.
         ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 10, null, JavaDistribution.NONE, 21);
         java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
         launcher.setSshConnectionFactory((host, port) -> {
