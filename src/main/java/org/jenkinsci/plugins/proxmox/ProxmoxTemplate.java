@@ -28,6 +28,7 @@ import org.jenkinsci.plugins.proxmox.api.model.VirtualMachine;
 import org.jenkinsci.plugins.proxmox.api.model.VmConfig;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
+import org.jenkinsci.plugins.proxmox.config.OsType;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentials;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
@@ -53,6 +54,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     private final String labelString;
     private final int numExecutors;
 
+    private OsType osType = OsType.LINUX;
     private CloneStrategy cloneStrategy = CloneStrategy.FULL;
     private String targetStorage;
     private String targetPool;
@@ -195,9 +197,10 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
 
     // Package-private for unit testing.
     VmConfig buildVmConfig(String sshPublicKey) {
-        boolean hasConfig = (cores > 0) || (memory > 0) || ciUser != null
-                || sshPublicKey != null || ipConfig != null
-                || nameserver != null || searchDomain != null;
+        boolean isLinux = getOsType() == OsType.LINUX;
+        boolean hasConfig = (cores > 0) || (memory > 0)
+                || (isLinux && (ciUser != null || sshPublicKey != null
+                        || ipConfig != null || nameserver != null || searchDomain != null));
 
         if (!hasConfig) {
             return null;
@@ -206,11 +209,11 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         return new VmConfig(
                 cores > 0 ? cores : null,
                 memory > 0 ? memory : null,
-                ciUser,
-                sshPublicKey,
-                ipConfig,
-                nameserver,
-                searchDomain);
+                isLinux ? ciUser : null,
+                isLinux ? sshPublicKey : null,
+                isLinux ? ipConfig : null,
+                isLinux ? nameserver : null,
+                isLinux ? searchDomain : null);
     }
 
     // Package-private for unit testing.
@@ -260,6 +263,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public int getTemplateVmId() { return templateVmId; }
     public String getLabelString() { return labelString; }
     public int getNumExecutors() { return numExecutors; }
+    public OsType getOsType() { return osType != null ? osType : OsType.LINUX; }
     public CloneStrategy getCloneStrategy() { return cloneStrategy; }
     public String getTargetStorage() { return targetStorage; }
     public String getTargetPool() { return targetPool; }
@@ -272,6 +276,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         String user = (ciUser != null && !ciUser.isBlank()) ? ciUser : "ubuntu";
         return "/home/" + user + "/agent";
     }
+    public String getRawRemoteFs() { return remoteFs; }
     public Node.Mode getMode() { return mode; }
     public String getCredentialsId() { return credentialsId; }
     public String getJavaPath() { return javaPath; }
@@ -290,6 +295,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public String getSearchDomain() { return searchDomain; }
 
     // Setters
+    @DataBoundSetter public void setOsType(OsType v) { this.osType = v != null ? v : OsType.LINUX; }
     @DataBoundSetter public void setCloneStrategy(CloneStrategy v) { this.cloneStrategy = v; }
     @DataBoundSetter public void setTargetStorage(String v) { this.targetStorage = v; }
     @DataBoundSetter public void setTargetPool(String v) { this.targetPool = v; }
@@ -351,6 +357,12 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         return Jenkins.get().getDescriptorOrDie(getClass());
     }
 
+    static void validateWindowsRemoteFs(ProxmoxTemplate template) throws Descriptor.FormException {
+        if (template.getOsType() == OsType.WINDOWS && template.getRawRemoteFs() == null) {
+            throw new Descriptor.FormException("Remote FS Root is required for Windows agents", "remoteFs");
+        }
+    }
+
     @Extension
     public static class DescriptorImpl extends Descriptor<ProxmoxTemplate> {
 
@@ -386,6 +398,9 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                     && template.getJavaMajorVersion() < 1) {
                 throw new FormException("Java major version must be set (1 or greater) "
                         + "when a Java distribution is selected", "javaMajorVersion");
+            }
+            if (template != null) {
+                validateWindowsRemoteFs(template);
             }
             return template;
         }
@@ -582,6 +597,15 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         public FormValidation doCheckTemplateVmId(@QueryParameter int value) {
             if (value <= 0) {
                 return FormValidation.error("Template VM ID must be positive");
+            }
+            return FormValidation.ok();
+        }
+
+        @POST
+        public FormValidation doCheckRemoteFs(@QueryParameter String value,
+                                              @QueryParameter String osType) {
+            if (OsType.WINDOWS.name().equals(osType) && (value == null || value.isBlank())) {
+                return FormValidation.error("Remote FS Root is required for Windows agents");
             }
             return FormValidation.ok();
         }

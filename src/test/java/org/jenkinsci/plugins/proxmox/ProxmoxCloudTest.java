@@ -277,6 +277,26 @@ class ProxmoxCloudTest {
         assertThrows(Descriptor.FormException.class, () -> ProxmoxCloud.validateTemplateMinimums(List.of(bad)));
     }
 
+    @Test
+    void cloudLevelValidationRejectsWindowsTemplateWithoutRemoteFs() throws Exception {
+        // Mirror the loop added in ProxmoxCloud.DescriptorImpl.newInstance() so that bypassed
+        // ProxmoxTemplate.newInstance() calls (via @DataBoundSetter binding) are still caught.
+        ProxmoxTemplate windowsNoFs = new ProxmoxTemplate("w", "pve1", 9001, "windows", 1);
+        windowsNoFs.setOsType(org.jenkinsci.plugins.proxmox.config.OsType.WINDOWS);
+
+        assertThrows(Descriptor.FormException.class,
+                () -> ProxmoxTemplate.validateWindowsRemoteFs(windowsNoFs));
+    }
+
+    @Test
+    void cloudLevelValidationAcceptsWindowsTemplateWithRemoteFs() throws Exception {
+        ProxmoxTemplate windowsWithFs = new ProxmoxTemplate("w", "pve1", 9001, "windows", 1);
+        windowsWithFs.setOsType(org.jenkinsci.plugins.proxmox.config.OsType.WINDOWS);
+        windowsWithFs.setRemoteFs("C:\\Users\\jenkins\\agent");
+
+        ProxmoxTemplate.validateWindowsRemoteFs(windowsWithFs); // must not throw
+    }
+
     // --- Copy Template control rendering (issue #25) ---
 
     @Test

@@ -280,6 +280,15 @@ public class ProxmoxConfigLoader {
         if (configMap.containsKey("searchDomain")) {
             template.setSearchDomain(getStr(configMap, "searchDomain", null));
         }
+        if (configMap.containsKey("osType")) {
+            template.setOsType(parseEnum(OsType.class,
+                    getStr(configMap, "osType", null), "osType"));
+        }
+
+        if (template.getOsType() == OsType.WINDOWS && template.getRawRemoteFs() == null) {
+            throw new IllegalArgumentException(
+                    "Template '" + template.getName() + "': Remote FS Root is required for Windows agents");
+        }
 
         return template;
     }

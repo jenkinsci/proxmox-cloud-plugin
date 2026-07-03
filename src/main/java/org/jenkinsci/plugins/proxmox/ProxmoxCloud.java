@@ -464,11 +464,13 @@ public class ProxmoxCloud extends Cloud {
                 throw new FormException(root.getMessage(), e, "");
             }
             if (cloud != null) {
-                // Enforce the warm-pool minimum <= cap rule on save. The per-template
-                // doCheckInstanceMin only validates client-side (which does not block submission), and
-                // nested template binding may bypass ProxmoxTemplate's own newInstance, so the cloud's
-                // newInstance (always invoked on save) is the reliable place to reject it.
+                // Enforce cross-field template rules on save. Nested template binding bypasses
+                // ProxmoxTemplate's own newInstance, so this method (always invoked on save) is
+                // the reliable place to reject invalid configurations.
                 validateTemplateMinimums(cloud.getTemplates());
+                for (ProxmoxTemplate t : cloud.getTemplates()) {
+                    ProxmoxTemplate.validateWindowsRemoteFs(t);
+                }
                 cloud.setLastConfigTimestamp(System.currentTimeMillis());
             }
             return cloud;

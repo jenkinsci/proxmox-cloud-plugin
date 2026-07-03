@@ -36,8 +36,18 @@
         <f:enum>${it.displayName}</f:enum>
     </f:entry>
 
+    <f:entry title="OS Type" field="osType">
+        <input type="hidden" class="proxmox-os-type-toggle"/>
+        <f:enum>${it.displayName}</f:enum>
+    </f:entry>
+
     <f:entry title="VM Username" field="ciUser">
-        <f:textbox class="proxmox-ciUser"/>
+        <input type="hidden" class="proxmox-linux-only"/>
+        <f:textbox clazz="proxmox-ciUser"/>
+    </f:entry>
+
+    <f:entry title="Remote FS Root" field="remoteFs">
+        <f:textbox clazz="proxmox-remoteFs" checkDependsOn="osType"/>
     </f:entry>
 
     <f:entry title="SSH Credentials" field="credentialsId">
@@ -91,17 +101,15 @@
         </f:section>
 
         <f:section title="Agent Settings">
-            <f:entry title="Remote FS Root" field="remoteFs">
-                <f:textbox class="proxmox-remoteFs"/>
-            </f:entry>
-
             <f:entry title="Java Distribution" field="javaDistribution"
                      description="Automatically install Java on the agent if not present">
+                <input type="hidden" class="proxmox-linux-only"/>
                 <f:enum>${it.displayName}</f:enum>
             </f:entry>
 
             <f:entry title="Java Major Version" field="javaMajorVersion"
                      description="Major version to install (ignored when distribution is None)">
+                <input type="hidden" class="proxmox-linux-only"/>
                 <f:combobox/>
             </f:entry>
 
@@ -148,14 +156,17 @@
 
         <f:section title="Cloud-Init">
             <f:entry title="IP Configuration" field="ipConfig">
+                <input type="hidden" class="proxmox-linux-only proxmox-section-start"/>
                 <f:textbox default="ip=dhcp"/>
             </f:entry>
 
             <f:entry title="Nameserver" field="nameserver">
+                <input type="hidden" class="proxmox-linux-only"/>
                 <f:textbox/>
             </f:entry>
 
             <f:entry title="Search Domain" field="searchDomain">
+                <input type="hidden" class="proxmox-linux-only"/>
                 <f:textbox/>
             </f:entry>
         </f:section>
@@ -169,6 +180,7 @@
         </f:entry>
     </j:if>
 
+    <st:adjunct includes="org.jenkinsci.plugins.proxmox.ProxmoxTemplate.os-type-toggle"/>
     <st:adjunct includes="org.jenkinsci.plugins.proxmox.ProxmoxTemplate.remoteFs-sync"/>
 
 </j:jelly>
