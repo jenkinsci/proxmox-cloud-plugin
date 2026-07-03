@@ -1,28 +1,55 @@
 # Proxmox Cloud Plugin
 
+[![Build Status](https://ci.jenkins.io/buildStatus/icon?job=Plugins%2Fproxmox-cloud-plugin%2Fmain)](https://ci.jenkins.io/job/Plugins/job/proxmox-cloud-plugin/job/main/)
+[![Jenkins Plugin](https://img.shields.io/jenkins/plugin/v/proxmox-cloud.svg)](https://plugins.jenkins.io/proxmox-cloud)
+[![Plugin installs](https://img.shields.io/jenkins/plugin/i/proxmox-cloud.svg?color=blue)](https://plugins.jenkins.io/proxmox-cloud)
+[![GitHub release](https://img.shields.io/github/release/jenkinsci/proxmox-cloud-plugin.svg?label=changelog)](https://github.com/jenkinsci/proxmox-cloud-plugin/releases/latest)
+
 A Jenkins cloud provider that runs your build agents as ephemeral QEMU virtual machines on
 [Proxmox VE](https://www.proxmox.com/). When the build queue needs capacity, the plugin clones a VM
-template, configures it through cloud-init, connects over SSH, and tears the VM down once it goes
-idle. Nothing is left running between builds.
+template (Linux clones are configured through cloud-init; Windows clones boot preconfigured from a
+sysprep-generalised image), connects over SSH, and tears the VM down once it goes idle, leaving
+nothing running between builds.
 
 It is built for on-prem and homelab CI: the elastic agent pool is your own Proxmox hardware, so
-there is no cloud account, no per-hour bill, and build data never leaves your network. The design
-follows the Jenkins [EC2 plugin](https://plugins.jenkins.io/ec2/) closely (see
+there is no cloud bill and build data stays on your network. The design follows the Jenkins
+[EC2 plugin](https://plugins.jenkins.io/ec2/) closely (see
 [Comparison with the EC2 plugin](#comparison-with-the-ec2-plugin)), and the two run well side by
 side for a hybrid on-prem/cloud fleet.
+
+Requires Jenkins 2.528 or newer and Proxmox VE 8.x or 9.x. Agents connect over SSH, so provisioned
+VMs must be reachable from the controller.
+
+## Table of contents
+
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Setup](#setup)
+- [Windows agents](#windows-agents)
+- [Agent lifecycle and scaling](#agent-lifecycle-and-scaling)
+- [Java auto-installation](#java-auto-installation)
+- [Configuration as Code](#configuration-as-code)
+- [Comparison with the EC2 plugin](#comparison-with-the-ec2-plugin)
+- [Known limitations](#known-limitations)
+- [Building from source](#building-from-source)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
 - **On-demand agents** cloned from a VM template, scaled to the build queue and destroyed when idle.
+- **Linux and Windows agents**: Linux clones are configured through cloud-init at boot; Windows
+  agents run from a sysprep-generalised template.
 - **Concurrent provisioning** up to the configured cap, so a cloud fills in roughly one clone time
   rather than serially.
 - **Per-template and per-cloud instance caps** to bound how many VMs run at once.
 - **Warm pool** (per-template minimum instances) that keeps a baseline of agents ready and is never
   idle-reaped below the minimum.
 - **Reuse limit** (max total uses) that recycles an agent after a set number of builds.
-- **Java auto-install** over SSH (OpenJDK or Amazon Corretto), so templates do not need Java baked in.
+- **Java auto-install** over SSH (OpenJDK or Amazon Corretto), so Linux templates do not need Java
+  preinstalled.
 - **Disk resize at clone time**, so a thin template image can grow to the agent size on provision.
-- **CPU / memory / storage / pool / cloud-init overrides** applied per template.
+- **CPU / memory / storage / pool / network bridge / cloud-init overrides** applied per template.
 - **Orphan and dead-node reconciliation** that destroys leaked VMs and removes stale nodes after a
   configurable, per-cloud period.
 - **VM-ID-reuse-safe teardown**: every destroy is ownership-verified and idempotent.
@@ -45,19 +72,16 @@ flowchart LR
     X -->|yes| D[Graceful shutdown<br/>then destroy VM]
 ```
 
-Disk resize and Java install are skipped when not configured. For contributors, the main components are:
-
-- `ProxmoxCloud`: cloud config and provisioning
-- `ProxmoxTemplate`: per-VM clone and cloud-init config
-- `ProxmoxLauncher`: IP discovery, Java install, SSH handoff
-- `ProxmoxRetentionStrategy`: idle and reuse-cap decisions
-- `ProxmoxOrphanCleanup`: reconciliation of leaked VMs and dead nodes
-- `api/`: Proxmox REST client and response models
-- `config/`: credentials, YAML config sync, and enums
+Disk resize and Java install are skipped when not configured. Windows templates skip the cloud-init
+and Java install steps entirely: clones boot from a sysprep-generalised image with SSH access and
+Java already in place (see [Windows agents](#windows-agents)).
 
 ## Setup
 
-### 1. Proxmox API Token
+The steps below set up a Linux agent template end to end. Steps 1, 3, and 4 apply to Windows as
+well; [Windows agents](#windows-agents) replaces steps 2 and 5.
+
+### 1. Proxmox API token
 
 Create a dedicated user, role, and API token on your Proxmox host.
 
@@ -95,9 +119,7 @@ Save the output. You will need:
 - **Token ID**: `jenkins@pve!jenkins-token`
 - **Token Secret**: the UUID printed by the command
 
-#### Privilege Reference
-
-Proxmox v9.x
+#### Privilege reference
 
 | Privilege | Purpose |
 |---|---|
@@ -111,31 +133,12 @@ Proxmox v9.x
 | `VM.Config.Options` | Set general VM options |
 | `VM.Config.Cloudinit` | Inject cloud-init parameters |
 | `VM.PowerMgmt` | Start, stop, shutdown VMs |
-| `VM.GuestAgent.Audit` | Query guest agent for IP address |
+| `VM.GuestAgent.Audit` | Query guest agent for IP address (v9.x; on v8.x use `VM.Monitor` instead) |
 | `Datastore.AllocateSpace` | Allocate disk space for clones |
 | `Datastore.Audit` | List available storage pools |
 | `SDN.Use` | Use network bridges |
 
-Proxmox v8.x
-
-| Privilege                 | Purpose                                                              |
-|---------------------------|----------------------------------------------------------------------|
-| `VM.Allocate`             | Create and remove VMs (includes reserving VM IDs and destroying VMs) |
-| `VM.Clone`                | Clone templates                                                      |
-| `VM.Audit`                | Read VM config and status                                            |
-| `VM.Config.Disk`          | Configure/resize disks on cloned VMs                                 |
-| `VM.Config.CPU`           | Override CPU cores                                                   |
-| `VM.Config.Memory`        | Override memory                                                      |
-| `VM.Config.Network`       | Configure network interfaces                                         |
-| `VM.Config.Options`       | Set general VM options                                               |
-| `VM.Config.Cloudinit`     | Inject cloud-init parameters                                         |
-| `VM.PowerMgmt`            | Start, stop, shutdown VMs                                            |
-| `VM.Monitor`              | Query guest agent for IP address (via the QEMU monitor)             |
-| `Datastore.AllocateSpace` | Allocate disk space for clones                                       |
-| `Datastore.Audit`         | List available storage pools                                         |
-| `SDN.Use`                 | Use network bridges                                                  |
-
-### 2. VM Template with Cloud-Init
+### 2. VM template with cloud-init
 
 Create a VM template that has cloud-init and the QEMU guest agent. The example below uses Ubuntu 24.04, but any cloud-init-enabled image works.
 
@@ -168,11 +171,11 @@ qm set 9000 --serial0 socket --vga serial0
 qm template 9000
 ```
 
-**Note:** The default cloud image disk is ~3.5GB. You do not need to resize it here - the plugin can resize the disk at clone time via the "Disk Size GB" template setting. Set it to at least 10GB if you plan to install Java automatically.
+**Note:** The default cloud image disk is ~3.5GB. You do not need to resize it here; the plugin can resize the disk at clone time via the "Disk Size GB" template setting. Set it to at least 10GB if you plan to install Java automatically.
 
 The plugin resizes `scsi0` (the disk used in the commands above). If your template's primary disk is on a different bus (`virtio0`, `sata0`), leave Disk Size GB at 0 and size the template image directly.
 
-### 3. SSH Key Pair
+### 3. SSH key pair
 
 Generate a key pair for Jenkins to connect to provisioned VMs:
 
@@ -180,9 +183,9 @@ Generate a key pair for Jenkins to connect to provisioned VMs:
 ssh-keygen -t ed25519 -f ~/.ssh/jenkins-proxmox -N "" -C "jenkins-agent"
 ```
 
-Add the **private key** (`~/.ssh/jenkins-proxmox`) as a Jenkins SSH credential (see step 4). The plugin automatically derives the public key from the credential and injects it into VMs via cloud-init at provision time - you do not need to configure the public key separately.
+Add the **private key** (`~/.ssh/jenkins-proxmox`) as a Jenkins SSH credential (see step 4). The plugin automatically derives the public key from the credential and injects it into VMs via cloud-init at provision time. You do not need to configure the public key separately.
 
-### 4. Jenkins Credentials
+### 4. Jenkins credentials
 
 You need two credentials in Jenkins. Add both via **Manage Jenkins → Credentials → System → Global credentials → Add Credentials**.
 
@@ -208,11 +211,11 @@ You need two credentials in Jenkins. Add both via **Manage Jenkins → Credentia
 | ID | e.g. `proxmox-ssh-key` |
 | Description | e.g. `Proxmox Agent SSH Key` |
 
-### 5. Jenkins Cloud Configuration
+### 5. Jenkins cloud configuration
 
 Go to **Manage Jenkins → Clouds → New cloud → Proxmox VE**.
 
-#### Cloud Settings
+#### Cloud settings
 
 | Field | Value |
 |---|---|
@@ -221,13 +224,13 @@ Go to **Manage Jenkins → Clouds → New cloud → Proxmox VE**.
 | Credentials | Select the **Proxmox API Token** credential created above |
 | Ignore SSL Errors | Check if using self-signed certs (Proxmox default) |
 
-Click **Test Connection** - it should report the Proxmox VE version.
+Click **Test Connection**; it should report the Proxmox VE version.
 
 Under cloud **Advanced** you can also set the per-cloud **Instance Cap**, **Operation Timeout**,
 **Start VM ID**, and the **Cleanup Orphaned Agents** options. These are covered in
 [Agent lifecycle and scaling](#agent-lifecycle-and-scaling).
 
-#### Template Settings
+#### Template settings
 
 A cloud can hold multiple templates. **Add Template** creates a blank one; **Copy Template** (next to
 it) duplicates an existing template's current on-form values into a new row, leaving the Name blank.
@@ -240,6 +243,9 @@ it) duplicates an existing template's current on-form values into a new row, lea
 | Labels | e.g. `linux ubuntu` |
 | Number of Executors | `1` |
 | Clone Strategy | Full Clone |
+| OS Type | Linux. For Windows templates, see [Windows agents](#windows-agents) |
+| VM Username | `ubuntu`. The user cloud-init creates on the VM; must match the SSH credential username. Blank keeps the image's default user |
+| Remote FS Root | *(blank)*. Agent work directory; blank defaults to `/home/<VM Username>/agent`. Required for Windows |
 | SSH Credentials | Select the **SSH Username with private key** credential |
 | Usage | Only build jobs with label expressions matching this node |
 
@@ -252,31 +258,31 @@ Under **Advanced → Proxmox Resources**:
 | CPU Cores | `0` | 0 = inherit from template |
 | Memory MB | `0` | 0 = inherit from template |
 | Disk Size GB | `10` | Resize scsi0 after clone. 0 = keep template size |
+| Network Bridge | *(blank)* | Bridge for the clone's network interface (e.g. `vmbr0`). Blank = inherit from template |
 
 Under **Advanced → Agent Settings**:
 
 | Field | Value | Description |
 |---|---|---|
-| Remote FS Root | `/home/ubuntu/agent` | Must be writable by SSH user. Blank defaults to `/home/<user>/agent` |
 | Java Distribution | None | Auto-installs Java if not present: None, OpenJDK, or Amazon Corretto |
 | Java Major Version | `21` | Major version to install (e.g. 21, 25), editable; ignored when distribution is None |
 | Java Path | `java` | Path to the java binary, used only when Java Distribution is None |
 | JVM Options | *(blank)* | Extra options for the agent JVM, e.g. `-Xmx512m` |
+| Name Prefix | `jenkins-agent-` | Prefix for generated VM names; the VM ID is appended |
 
 Under **Advanced → Cloud-Init**:
 
 | Field | Value |
 |---|---|
-| User | `ubuntu` (must match the cloud image's default user) |
 | IP Configuration | `ip=dhcp` (or `ip=10.0.0.50/24,gw=10.0.0.1` for a static address) |
 | Nameserver | *(optional)* DNS server for the agent |
 | Search Domain | *(optional)* DNS search domain |
 
 The SSH public key is automatically derived from the SSH credential selected above and injected into the VM via cloud-init.
 
-These fields map to Proxmox's built-in cloud-init parameters (`ciuser`, `sshkeys`, `ipconfig0`, `nameserver`, `searchdomain`), which the plugin sets through the API.
+These fields, together with VM Username, map to Proxmox's built-in cloud-init parameters (`ipconfig0`, `nameserver`, `searchdomain`, `ciuser`, `sshkeys`), which the plugin sets through the API.
 
-#### Lifecycle Settings (Advanced)
+Under **Advanced → Lifecycle**:
 
 | Field | Default | Description |
 |---|---|---|
@@ -286,9 +292,11 @@ These fields map to Proxmox's built-in cloud-init parameters (`ciuser`, `sshkeys
 | Max Total Uses | 0 (unlimited) | Recycle the agent after N builds |
 | Startup Wait (seconds) | 60 | Time to wait for VM boot, IP, and SSH |
 
-### 6. Test It
+### 6. Provision a test agent
 
-You can manually provision an agent from **Manage Jenkins → Nodes** using the "Provision via" button, or create a freestyle job with a matching label expression:
+The **Nodes** page (**Manage Jenkins → Nodes**) shows a "Provision via" button for each configured
+template. Clicking it clones and starts a VM immediately, without waiting for demand. Alternatively,
+create a freestyle job with a matching label expression:
 
 ```bash
 hostname
@@ -297,7 +305,89 @@ java -version
 cat /etc/os-release
 ```
 
-Run it. The plugin will clone the template, resize the disk, boot the VM, install Java, SSH in, execute the build, then terminate after idle timeout.
+Run it. The plugin clones the template, resizes the disk, boots the VM, installs Java if configured,
+connects over SSH, runs the build, and terminates the agent after the idle timeout.
+
+## Windows agents
+
+Setup steps 1, 3, and 4 apply unchanged to Windows; this section replaces step 2 (the VM template)
+and step 5 (the template settings). Tested on Windows Server 2022. Other versions should work with
+the same steps; the main variable is VirtIO driver availability and the exact path of the
+VirtIO/QEMU Guest Agent installer.
+
+Windows agents take a different approach from Linux: instead of configuring the clone at provision
+time, everything the agent needs (the `jenkins` account, its SSH key, Java) is baked into the
+template.
+[Sysprep](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/sysprep--system-preparation--overview),
+Microsoft's system preparation tool, makes that template safe to clone: run once during template
+creation (step 10 below), it generalises the image by removing machine-specific state such as the
+hostname and machine SID. Windows rebuilds that state on each clone's first boot, which is why a
+Windows clone takes longer to accept SSH connections than a Linux one, and why a higher Startup
+Wait is recommended.
+
+When OS Type is set to **Microsoft Windows** in a template, the following fields are hidden
+because they are Linux or cloud-init concepts with no effect on Windows VMs:
+
+- VM Username
+- Java Distribution
+- Java Major Version
+- IP Configuration
+- Nameserver
+- Search Domain
+
+### Creating the Proxmox template
+
+1. Create a new VM in Proxmox (OVMF/UEFI firmware, TPM 2.0, VirtIO SCSI controller).
+2. Boot from a Windows Server ISO. Install VirtIO drivers during setup (from the VirtIO ISO,
+   attached as a second CD-ROM).
+3. After installation, run the VirtIO Guest Tools installer to get the QEMU Guest Agent
+   component. Set the "QEMU Guest Agent" service to start automatically.
+4. Enable the guest agent for the VM in Proxmox: VM settings, Options, QEMU Guest Agent.
+   Or via CLI: `qm set <vmid> --agent enabled=1`. This is required for IP discovery.
+5. Install OpenSSH Server: Settings, Optional Features, Add a Feature, OpenSSH Server.
+   Set the `sshd` service to start automatically.
+6. Create a local `jenkins` user account.
+7. Place the SSH public key in `C:\Users\jenkins\.ssh\authorized_keys`.
+8. In `C:\ProgramData\ssh\sshd_config`, set `AuthorizedKeysFile .ssh/authorized_keys`
+   and `StrictModes no`. Restart the `sshd` service.
+9. Install Java 21 or later (Eclipse Temurin or similar) and verify `java -version` works
+   in a new PowerShell window (confirming it is on the system PATH for SSH sessions).
+10. Run sysprep to generalise the image: open `C:\Windows\System32\Sysprep\sysprep.exe`,
+    select "Enter System Out-of-Box Experience (OOBE)", check "Generalize", set shutdown
+    option to Shutdown. This resets the hostname and SID on each clone.
+11. Once the VM has shut down, convert it to a Proxmox template (right-click, Convert to
+    Template).
+
+**Profile path note.** On first boot of a clone, Windows registers the `jenkins` user
+profile at `C:\Users\jenkins.<ORIGINAL-HOSTNAME>`, where `<ORIGINAL-HOSTNAME>` is the
+hostname the template VM had before sysprep. This path is stable across clones because
+Windows maps SIDs to profile paths and sysprep preserves the SID assignment. Use this path
+as the base for Remote FS Root in the Jenkins template config.
+
+### Configuring the Jenkins template
+
+| Field | Value |
+|---|---|
+| OS Type | Microsoft Windows |
+| Template VM ID | ID of your Windows template VM |
+| SSH Credentials | Username `jenkins`, private key matching `authorized_keys` |
+| Remote FS Root | Required. Full path to the agent work directory, e.g. `C:\Users\jenkins.<ORIGINAL-HOSTNAME>\agent` |
+| Java Path | `java` if on the system PATH, or the full path to `java.exe` |
+| Startup Wait (seconds) | 300 is recommended. Windows sysprep finalization takes longer than a Linux cloud-init boot. |
+
+Java auto-install is Linux-only (it uses apt over SSH), so the template must have Java
+preinstalled (step 9 above); the hidden Java Distribution field is fixed at None for Windows
+templates.
+
+### Startup behaviour
+
+Windows OpenSSH accepts TCP connections a few seconds before its auth subsystem is ready
+during first-boot sysprep finalization. The plugin handles this with an authentication retry
+loop after the port-open check; no configuration is needed, but keep Startup Wait high enough
+to cover the full boot time.
+
+For YAML-managed Windows templates, see the notes in
+[Configuration as Code](#configuration-as-code).
 
 ## Agent lifecycle and scaling
 
@@ -310,8 +400,8 @@ template.
 
 Caps apply at two levels. Each **template** has its own `Instance Cap`, and the **cloud** has an
 overall `Instance Cap` across all of its templates. Provisioning fills concurrently up to whichever
-limit binds first. Dead nodes (a channel offline beyond the grace period, or a phantom whose VM is
-gone) are excluded from cap accounting, so a zombie cannot hold a slot and block a healthy
+limit binds first. Dead nodes (a channel offline beyond the grace period, or a node whose VM is
+gone) are excluded from cap accounting, so they cannot hold a cap slot and block a healthy
 replacement.
 
 ### Idle termination
@@ -335,9 +425,9 @@ max-uses recycle. The retention strategy will not idle-reap an agent if doing so
 template below its minimum. The minimum must not exceed the instance cap; this is enforced on save.
 
 The warm pool only ever scales **up**. Lowering a minimum drains the surplus through normal idle
-termination, so warm agents need `Idle Termination > 0` to ever go away. Because lifecycle settings
-are baked in per agent at provision time, set the template's idle timeout before provisioning the
-pool.
+termination, so warm agents are only removed when `Idle Termination` is greater than 0. Because
+lifecycle settings are baked in per agent at provision time, set the template's idle timeout before
+provisioning the pool.
 
 ### Orphan and dead-node cleanup
 
@@ -367,7 +457,10 @@ reserves the lowest free ID at or above this floor for each clone.
 
 ## Java auto-installation
 
-The plugin can automatically install a JRE on provisioned agents, eliminating the need to bake Java into your template image. Pick a **Java Distribution** and a **Java Major Version**:
+The plugin can install a JRE on provisioned Linux agents at launch, so the template image does not
+need Java preinstalled. This applies to Linux agents only; Windows templates must have Java
+preinstalled (see [Windows agents](#windows-agents)). Pick a **Java Distribution** and a
+**Java Major Version**:
 
 | Distribution | Package installed |
 |---|---|
@@ -382,14 +475,11 @@ The install process:
 3. Installs the selected JRE (adding the Corretto apt repository first, for Corretto)
 4. Removes unneeded packages and cleans up
 
-Requirements: the SSH user must have passwordless `sudo` access (default for Ubuntu cloud images).
+Requirements: an apt-based image and passwordless `sudo` for the SSH user (both default for Ubuntu
+cloud images).
 
 When Java Distribution is **None**, no install runs and the agent uses the `Java Path` you configure (or
 auto-detects `java` on the PATH if left at the default).
-
-## Manual provisioning
-
-The **Nodes** page (`/computer/`) shows a "Provision via [cloud name]" button for each configured template. Clicking it immediately clones and starts a VM without waiting for demand.
 
 ## Configuration as Code
 
@@ -454,7 +544,7 @@ agentDefaults:
   javaMajorVersion: 21                  # major version to install (21+ recommended)
   jvmOptions: "-Xmx512m"
   idleTerminationMinutes: 30
-  startupWaitSeconds: 120
+  startupWaitSeconds: 120               # default 60
 
 # Per-node defaults, selected by an agent's `node` value.
 agentDefaults-pve1:
@@ -487,6 +577,18 @@ agentConfigurations:
     labelString: "linux arm64"
     numExecutors: 1
     templateVmId: 9101                  # override the per-node default
+
+  windows-builder:
+    cloudIds: ["primary"]
+    node: "pve1"
+    name: "windows-builder"
+    labelString: "windows"
+    numExecutors: 1
+    osType: WINDOWS                     # LINUX (default) or WINDOWS
+    templateVmId: 9200
+    remoteFs: 'C:\Users\jenkins\agent'  # required when osType is WINDOWS
+    javaDistribution: NONE              # Java auto-install is Linux-only
+    startupWaitSeconds: 300
 ```
 
 Recognised cloud keys: `name`, `apiUrl`, `credentialsId`, `ignoreSslErrors`, `instanceCap`,
@@ -494,10 +596,16 @@ Recognised cloud keys: `name`, `apiUrl`, `credentialsId`, `ignoreSslErrors`, `in
 `orphanCleanupGracePeriodSeconds`.
 
 Recognised agent keys: `node`, `name`, `templateVmId`, `labelString`, `numExecutors`,
-`cloneStrategy`, `targetStorage`, `targetPool`, `cores`, `memoryMb`, `diskSizeGb`, `remoteFs`,
-`mode`, `credentialsId`, `javaDistribution`, `javaMajorVersion`, `javaPath`, `jvmOptions`, `idleTerminationMinutes`,
-`instanceCap`, `instanceMin`, `maxTotalUses`, `namePrefix`, `startupWaitSeconds`, `ciUser`,
-`ipConfig`, `nameserver`, `searchDomain`.
+`cloneStrategy`, `osType`, `targetStorage`, `targetPool`, `cores`, `memoryMb`, `diskSizeGb`,
+`networkBridge`, `remoteFs`, `mode`, `credentialsId`, `javaDistribution`, `javaMajorVersion`,
+`javaPath`, `jvmOptions`, `idleTerminationMinutes`, `instanceCap`, `instanceMin`, `maxTotalUses`,
+`namePrefix`, `startupWaitSeconds`, `ciUser`, `ipConfig`, `nameserver`, `searchDomain`.
+
+For templates with `osType: WINDOWS`, `remoteFs` is required and the sync rejects a file that omits
+it. The cloud-init keys (`ciUser`, `ipConfig`, `nameserver`, `searchDomain`) are ignored at
+provision time for Windows templates, so inheriting them from `agentDefaults` is harmless.
+`javaDistribution` is not ignored: set it to `NONE` explicitly (the Java auto-install uses apt over
+SSH and is Linux-only).
 
 ### Behavior
 
@@ -527,7 +635,8 @@ will feel familiar.
   stays on your network.
 - It provisions by **cloning a VM template and configuring it through cloud-init**, rather than
   launching an AMI.
-- It (optionally) **installs the agent JRE over SSH** at launch, so you do not have to bake Java into every image.
+- It (optionally) **installs the agent JRE over SSH** at launch, so images do not need Java
+  preinstalled.
 - It (optionally) **resizes the clone's disk** through the API, so one thin template image serves agents of
   different sizes.
 - It ships a **built-in git-backed YAML config sync** with drift detection and read-only protection,
@@ -538,73 +647,11 @@ will feel familiar.
 **On-prem, homelab, and hybrid**
 
 The EC2 plugin pitches itself as a way to spill spiky load from a small in-house cluster out to EC2.
-This plugin is the other half of that story: it turns your own Proxmox capacity into the elastic
-agent pool, which is a strong fit for homelabs and on-prem CI where a cloud bill or data egress is
-unwelcome. It also runs happily alongside the EC2 plugin. Jenkins supports multiple clouds at
-once, so you can keep steady or sensitive workloads on local Proxmox capacity and burst to EC2 for
-spikes, routing jobs to either by label.
-
-## Windows Agents
-
-Tested on Windows Server 2022. Other versions should work with the same steps; the main variable
-is VirtIO driver availability and the exact path of the VirtIO/QEMU Guest Agent installer.
-
-When OS Type is set to **Microsoft Windows** in a template, the following fields are hidden
-because they are Linux/cloud-init concepts that have no effect on Windows VMs: 
-- VM Username
-- Java Distribution
-- Java Major Version
-- IP Configuration
-- Nameserver
-- Search Domain.
-
-### Creating the Proxmox template
-
-1. Create a new VM in Proxmox (OVMF/UEFI firmware, TPM 2.0, VirtIO SCSI controller).
-2. Boot from a Windows Server ISO. Install VirtIO drivers during setup (from the VirtIO ISO,
-   attached as a second CD-ROM).
-3. After installation, run the VirtIO Guest Tools installer to get the QEMU Guest Agent
-   component. Set the "QEMU Guest Agent" service to start automatically.
-4. Enable the guest agent for the VM in Proxmox: VM settings, Options, QEMU Guest Agent.
-   Or via CLI: `qm set <vmid> --agent enabled=1`. This is required for IP discovery.
-5. Install OpenSSH Server: Settings, Optional Features, Add a Feature, OpenSSH Server.
-   Set the `sshd` service to start automatically.
-6. Create a local `jenkins` user account.
-7. Place the SSH public key in `C:\Users\jenkins\.ssh\authorized_keys`.
-8. In `C:\ProgramData\ssh\sshd_config`, set `AuthorizedKeysFile .ssh/authorized_keys`
-   and `StrictModes no`. Restart the `sshd` service.
-9. Install Java 21 or later (Eclipse Temurin or similar) and verify `java -version` works
-   in a new PowerShell window (confirming it is on the system PATH for SSH sessions).
-10. Run sysprep to generalise the image: open `C:\Windows\System32\Sysprep\sysprep.exe`,
-    select "Enter System Out-of-Box Experience (OOBE)", check "Generalize", set shutdown
-    option to Shutdown. This resets the hostname and SID on each clone.
-11. Once the VM has shut down, convert it to a Proxmox template (right-click, Convert to
-    Template).
-
-**Profile path note.** On first boot of a clone, Windows registers the `jenkins` user
-profile at `C:\Users\jenkins.<ORIGINAL-HOSTNAME>`, where `<ORIGINAL-HOSTNAME>` is the
-hostname the template VM had before sysprep. This path is stable across clones because
-Windows maps SIDs to profile paths and sysprep preserves the SID assignment. Use this path
-as the base for Remote FS Root in the Jenkins template config.
-
-### Configuring the Jenkins template
-
-| Field | Value |
-|---|---|
-| OS Type | Microsoft Windows |
-| Template VM ID | ID of your Windows template VM |
-| SSH Credentials | Username `jenkins`, private key matching `authorized_keys` |
-| Remote FS Root | Required. Full path to the agent work directory, e.g. `C:\Users\jenkins.<ORIGINAL-HOSTNAME>\agent` |
-| Java Distribution | None (Java is pre-installed in the template; auto-install uses apt-get and is Linux-only) |
-| Java Path | `java` if on the system PATH, or the full path to `java.exe` |
-| Startup Wait (seconds) | 300 is recommended. Windows sysprep finalization takes longer than a Linux cloud-init boot. |
-
-### Notes
-
-Windows OpenSSH accepts TCP connections a few seconds before its auth subsystem is ready
-during first-boot sysprep finalization. The plugin handles this automatically via an
-auth-retry loop after the port-open check; no configuration is needed, but keep Startup Wait
-high enough to cover the full boot time.
+This plugin covers the opposite case: it turns your own Proxmox capacity into the elastic agent
+pool, well suited to homelabs and on-prem CI where a cloud bill or data egress is unwelcome. It also
+runs alongside the EC2 plugin. Jenkins supports multiple clouds at once, so you can keep steady or
+sensitive workloads on local Proxmox capacity and burst to EC2 for spikes, routing jobs to either by
+label.
 
 ## Known limitations
 
@@ -619,7 +666,7 @@ high enough to cover the full boot time.
   controller dials out over SSH instead. Inbound agent support could be added on request, subject to
   these constraints; open a feature request on the [issue tracker](https://github.com/jenkinsci/proxmox-cloud-plugin/issues).
 
-## Building from Source
+## Building from source
 
 ```bash
 mvn clean verify    # Run tests and build the HPI
@@ -630,14 +677,10 @@ The built plugin is at `target/proxmox-cloud.hpi`.
 
 ## Contributing
 
-Found a bug or have a feature request? Please open an issue on the [GitHub issue tracker](https://github.com/jenkinsci/proxmox-cloud-plugin/issues).
-
-Pull requests are welcome. To build and test locally:
-
-```bash
-mvn clean verify
-```
+Bug reports and feature requests go to the
+[GitHub issue tracker](https://github.com/jenkinsci/proxmox-cloud-plugin/issues). See
+[CONTRIBUTING.md](CONTRIBUTING.md) for build instructions and the pull request process.
 
 ## License
 
-MIT License
+MIT License. See [LICENSE](LICENSE).

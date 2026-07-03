@@ -1,0 +1,7 @@
+<div>
+    Operating system of the template VM. For <b>Linux</b>, the clone is configured at boot through
+    Proxmox's cloud-init parameters (username, SSH key, IP, DNS) and Java can be auto-installed.
+    For <b>Microsoft Windows</b>, the clone boots from a sysprep-generalised image with OpenSSH and
+    Java preinstalled; the cloud-init and Java install fields are hidden because they have no
+    effect on Windows VMs, and Remote FS Root must be set explicitly.
+</div>
