@@ -239,7 +239,7 @@ it) duplicates an existing template's current on-form values into a new row, lea
 |---|---|
 | Name | e.g. `ubuntu-agent` |
 | Proxmox Node | Your node name (e.g. `pve`, `node1`) |
-| Template VM ID | `9000` (or your template ID) |
+| Template selection | Static VM id (e.g. `9000`), or dynamic by name regex / tag (see below) |
 | Labels | e.g. `linux ubuntu` |
 | Number of Executors | `1` |
 | Clone Strategy | Full Clone |
@@ -248,6 +248,23 @@ it) duplicates an existing template's current on-form values into a new row, lea
 | Remote FS Root | *(blank)*. Agent work directory; blank defaults to `/home/<VM Username>/agent`. Required for Windows |
 | SSH Credentials | Select the **SSH Username with private key** credential |
 | Usage | Only build jobs with label expressions matching this node |
+
+##### Template selection
+
+Three modes choose the template VM to clone:
+
+- **Clone a specific template VM id**: the current dropdown; the id is fixed at save time.
+- **Clone the newest template whose name matches a regular expression**: a
+  [Java regex](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/regex/Pattern.html)
+  matched against the entire template name (use `.*` for partial matches).
+- **Clone the newest template with a tag**: an exact Proxmox tag, compared case-insensitively.
+
+The dynamic modes re-resolve on the configured node at every provision, so templates rebuilt on a
+schedule under fresh VM ids are picked up automatically. When several templates match, the most
+recently created wins (highest `ctime` from the VM config's `meta` property; templates without one
+count as oldest; ties go to the highest VM id). The form shows how many templates currently match
+and which one would be cloned; zero matches is allowed at save time but provisioning fails until a
+template matches.
 
 Under **Advanced → Proxmox Resources**:
 
@@ -578,6 +595,15 @@ agentConfigurations:
     numExecutors: 1
     templateVmId: 9101                  # override the per-node default
 
+  rolling-builder:
+    cloudIds: ["primary"]
+    node: "pve1"
+    name: "rolling-builder"
+    labelString: "linux rolling"
+    numExecutors: 1
+    templateSelectionMode: NAME_REGEX   # STATIC_ID (default), NAME_REGEX, or TAG
+    templateNameRegex: "agent-.*"       # newest matching template is cloned; templateVmId not needed
+
   windows-builder:
     cloudIds: ["primary"]
     node: "pve1"
@@ -595,11 +621,18 @@ Recognised cloud keys: `name`, `apiUrl`, `credentialsId`, `ignoreSslErrors`, `in
 `operationTimeoutSec`, `startVmId`, `cleanupOrphanedAgents`, `orphanCleanupPeriodSeconds`,
 `orphanCleanupGracePeriodSeconds`.
 
-Recognised agent keys: `node`, `name`, `templateVmId`, `labelString`, `numExecutors`,
+Recognised agent keys: `node`, `name`, `templateVmId`, `templateSelectionMode`,
+`templateNameRegex`, `templateTag`, `labelString`, `numExecutors`,
 `cloneStrategy`, `osType`, `targetStorage`, `targetPool`, `cores`, `memoryMb`, `diskSizeGb`,
 `networkBridge`, `remoteFs`, `mode`, `credentialsId`, `javaDistribution`, `javaMajorVersion`,
 `javaPath`, `jvmOptions`, `idleTerminationMinutes`, `instanceCap`, `instanceMin`, `maxTotalUses`,
 `namePrefix`, `startupWaitSeconds`, `ciUser`, `ipConfig`, `nameserver`, `searchDomain`.
+
+`templateSelectionMode` defaults to `STATIC_ID`, which requires `templateVmId`; `NAME_REGEX`
+requires `templateNameRegex` (a Java regex matched against the entire template name) and `TAG`
+requires `templateTag` (exact tag, case-insensitive). The dynamic modes resolve the newest matching
+template on the agent's `node` at every provision; see
+[Template selection](#template-selection).
 
 For templates with `osType: WINDOWS`, `remoteFs` is required and `javaDistribution` must be `NONE`
 (Java auto-install is Linux-only); the sync rejects a file that breaks either rule, including a

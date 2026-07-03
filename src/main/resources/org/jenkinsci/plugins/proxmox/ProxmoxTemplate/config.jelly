@@ -16,12 +16,38 @@
         </j:choose>
     </f:entry>
 
-    <f:entry title="Template VM ID" field="templateVmId">
-        <j:choose>
-            <j:when test="${readOnlyMode}"><f:textbox/></j:when>
-            <j:otherwise><f:select/></j:otherwise>
-        </j:choose>
-    </f:entry>
+    <!-- Template selection: static id, or resolved by name regex / tag at each provision.
+         inline="true" binds the checked radio flat as templateSelectionMode; unchecked blocks
+         are hidden (not disabled), so their fields still submit and are validated mode-aware. -->
+    <j:set var="selectionMode"
+           value="${instance != null ? instance.templateSelectionMode.name() : 'STATIC_ID'}"/>
+
+    <f:radioBlock name="templateSelectionMode" value="STATIC_ID" inline="true"
+                  title="Clone a specific template VM id"
+                  checked="${selectionMode == 'STATIC_ID'}">
+        <f:entry title="Template VM ID" field="templateVmId">
+            <j:choose>
+                <j:when test="${readOnlyMode}"><f:textbox/></j:when>
+                <j:otherwise><f:select/></j:otherwise>
+            </j:choose>
+        </f:entry>
+    </f:radioBlock>
+
+    <f:radioBlock name="templateSelectionMode" value="NAME_REGEX" inline="true"
+                  title="Clone the newest template whose name matches a regular expression"
+                  checked="${selectionMode == 'NAME_REGEX'}">
+        <f:entry title="Template Name Regex" field="templateNameRegex">
+            <f:textbox/>
+        </f:entry>
+    </f:radioBlock>
+
+    <f:radioBlock name="templateSelectionMode" value="TAG" inline="true"
+                  title="Clone the newest template with a tag"
+                  checked="${selectionMode == 'TAG'}">
+        <f:entry title="Template Tag" field="templateTag">
+            <f:textbox/>
+        </f:entry>
+    </f:radioBlock>
 
     <f:entry title="Labels" field="labelString">
         <f:textbox/>

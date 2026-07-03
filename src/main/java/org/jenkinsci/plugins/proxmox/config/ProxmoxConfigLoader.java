@@ -198,12 +198,23 @@ public class ProxmoxConfigLoader {
     public ProxmoxTemplate createProxmoxTemplate(Map<String, Object> configMap) {
         String name = getRequiredStr(configMap, "name", "Agent template");
         String node = getRequiredStr(configMap, "node", "Agent template '" + name + "'");
-        int templateVmId = getRequiredInt(configMap, "templateVmId", "Agent template '" + name + "'");
+        // Only required in the (default) static selection mode; validated after the mode is known.
+        int templateVmId = getInt(configMap, "templateVmId", 0);
         String labelString = getStr(configMap, "labelString", "");
         int numExecutors = getInt(configMap, "numExecutors", 1);
 
         ProxmoxTemplate template = new ProxmoxTemplate(name, node, templateVmId, labelString, numExecutors);
 
+        if (configMap.containsKey("templateSelectionMode")) {
+            template.setTemplateSelectionMode(parseEnum(TemplateSelectionMode.class,
+                    getStr(configMap, "templateSelectionMode", null), "templateSelectionMode"));
+        }
+        if (configMap.containsKey("templateNameRegex")) {
+            template.setTemplateNameRegex(getStr(configMap, "templateNameRegex", null));
+        }
+        if (configMap.containsKey("templateTag")) {
+            template.setTemplateTag(getStr(configMap, "templateTag", null));
+        }
         if (configMap.containsKey("cloneStrategy")) {
             template.setCloneStrategy(parseEnum(CloneStrategy.class,
                     getStr(configMap, "cloneStrategy", null), "cloneStrategy"));
@@ -283,6 +294,29 @@ public class ProxmoxConfigLoader {
         if (configMap.containsKey("osType")) {
             template.setOsType(parseEnum(OsType.class,
                     getStr(configMap, "osType", null), "osType"));
+        }
+
+        switch (template.getTemplateSelectionMode()) {
+            case STATIC_ID -> {
+                if (template.getTemplateVmId() <= 0) {
+                    throw new IllegalArgumentException(
+                            "Agent template '" + name + "' missing required field: templateVmId");
+                }
+            }
+            case NAME_REGEX -> {
+                if (template.getTemplateNameRegex() == null) {
+                    throw new IllegalArgumentException("Agent template '" + name
+                            + "' missing required field: templateNameRegex"
+                            + " (required for templateSelectionMode NAME_REGEX)");
+                }
+            }
+            case TAG -> {
+                if (template.getTemplateTag() == null) {
+                    throw new IllegalArgumentException("Agent template '" + name
+                            + "' missing required field: templateTag"
+                            + " (required for templateSelectionMode TAG)");
+                }
+            }
         }
 
         if (template.getOsType() == OsType.WINDOWS && template.getRawRemoteFs() == null) {
@@ -375,15 +409,6 @@ public class ProxmoxConfigLoader {
     private int getInt(Map<String, Object> map, String key, int defaultVal) {
         Object val = map.get(key);
         if (val == null) return defaultVal;
-        if (val instanceof Number n) return n.intValue();
-        return Integer.parseInt(val.toString());
-    }
-
-    private int getRequiredInt(Map<String, Object> map, String key, String context) {
-        Object val = map.get(key);
-        if (val == null) {
-            throw new IllegalArgumentException(context + " missing required field: " + key);
-        }
         if (val instanceof Number n) return n.intValue();
         return Integer.parseInt(val.toString());
     }

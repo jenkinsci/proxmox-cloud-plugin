@@ -67,7 +67,7 @@ class ProxmoxClientTest {
     void testGetTemplates() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
                 .willReturn(okJson("{\"data\":[" +
-                        "{\"vmid\":100,\"name\":\"template-ubuntu\",\"status\":\"stopped\",\"template\":1}," +
+                        "{\"vmid\":100,\"name\":\"template-ubuntu\",\"status\":\"stopped\",\"template\":1,\"tags\":\"jenkins;prod\"}," +
                         "{\"vmid\":200,\"name\":\"running-vm\",\"status\":\"running\",\"template\":0}" +
                         "]}")));
 
@@ -75,6 +75,7 @@ class ProxmoxClientTest {
         assertEquals(1, templates.size());
         assertEquals(100, templates.get(0).vmid());
         assertTrue(templates.get(0).isTemplate());
+        assertEquals(List.of("jenkins", "prod"), templates.get(0).tagList());
     }
 
     @Test
@@ -403,5 +404,50 @@ class ProxmoxClientTest {
     void executeWrapsConnectionFailureAsProxmoxException() {
         ProxmoxClient deadClient = new ProxmoxClient("http://localhost:1", "u@pve!t", Secret.fromString("s"), false);
         assertThrows(ProxmoxException.class, deadClient::getVersion);
+    }
+
+    @Test
+    void getVmCreationTimeReadsMetaCtime() {
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/config"))
+                .willReturn(okJson("{\"data\":{\"meta\":\"creation-qemu=9.0.2,ctime=1700000000\"}}")));
+
+        assertEquals(1700000000L, client.getVmCreationTime("pve1", 9000));
+    }
+
+    @Test
+    void getVmCreationTimeMissingMetaReturnsMinusOne() {
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/config"))
+                .willReturn(okJson("{\"data\":{\"cores\":2}}")));
+
+        assertEquals(-1, client.getVmCreationTime("pve1", 9000));
+    }
+
+    @Test
+    void parseCtimeFromMetaHandlesPositionsAndMalformedValues() {
+        assertEquals(1700000000L, ProxmoxClient.parseCtimeFromMeta("ctime=1700000000"));
+        assertEquals(1700000000L, ProxmoxClient.parseCtimeFromMeta("creation-qemu=9.0.2,ctime=1700000000"));
+        assertEquals(1700000000L, ProxmoxClient.parseCtimeFromMeta("ctime=1700000000,creation-qemu=9.0.2"));
+        assertEquals(-1, ProxmoxClient.parseCtimeFromMeta("creation-qemu=9.0.2"));
+        assertEquals(-1, ProxmoxClient.parseCtimeFromMeta("ctime=notanumber"));
+        assertEquals(-1, ProxmoxClient.parseCtimeFromMeta(""));
+    }
+
+    @Test
+    void tagListSplitsTrimsLowercasesAndMatchesExactly() {
+        assertEquals(List.of(), vmWithTags(null).tagList());
+        assertEquals(List.of(), vmWithTags("  ").tagList());
+        assertEquals(List.of("a", "b"), vmWithTags("a;b").tagList());
+        assertEquals(List.of("a", "b"), vmWithTags(" a ; B ;").tagList());
+
+        assertTrue(vmWithTags("Jenkins;prod").hasTag("jenkins"));
+        assertTrue(vmWithTags("jenkins").hasTag(" JENKINS "));
+        assertFalse(vmWithTags("production").hasTag("prod")); // exact tag, not a prefix
+        assertFalse(vmWithTags("prod").hasTag(null));
+        assertFalse(vmWithTags("prod").hasTag(" "));
+        assertFalse(vmWithTags(null).hasTag("prod"));
+    }
+
+    private static VirtualMachine vmWithTags(String tags) {
+        return new VirtualMachine(100, "vm", "stopped", "pve1", 0, 1, tags);
     }
 }
