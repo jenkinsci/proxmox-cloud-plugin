@@ -297,6 +297,18 @@ class ProxmoxCloudTest {
         ProxmoxTemplate.validateWindowsRemoteFs(windowsWithFs); // must not throw
     }
 
+    @Test
+    void cloudLevelValidationRejectsWindowsTemplateWithJavaInstall() throws Exception {
+        // Mirrors the newInstance() loop, like the remoteFs tests above (issue #29).
+        ProxmoxTemplate windowsInstall = new ProxmoxTemplate("w", "pve1", 9001, "windows", 1);
+        windowsInstall.setOsType(org.jenkinsci.plugins.proxmox.config.OsType.WINDOWS);
+        windowsInstall.setRemoteFs("C:\\Users\\jenkins\\agent");
+        windowsInstall.setJavaDistribution(org.jenkinsci.plugins.proxmox.config.JavaDistribution.OPENJDK);
+
+        assertThrows(Descriptor.FormException.class,
+                () -> ProxmoxTemplate.validateWindowsJavaDistribution(windowsInstall));
+    }
+
     // --- Copy Template control rendering (issue #25) ---
 
     @Test

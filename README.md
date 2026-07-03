@@ -587,7 +587,7 @@ agentConfigurations:
     osType: WINDOWS                     # LINUX (default) or WINDOWS
     templateVmId: 9200
     remoteFs: 'C:\Users\jenkins\agent'  # required when osType is WINDOWS
-    javaDistribution: NONE              # Java auto-install is Linux-only
+    javaDistribution: NONE              # required for WINDOWS (auto-install is Linux-only)
     startupWaitSeconds: 300
 ```
 
@@ -601,11 +601,11 @@ Recognised agent keys: `node`, `name`, `templateVmId`, `labelString`, `numExecut
 `javaPath`, `jvmOptions`, `idleTerminationMinutes`, `instanceCap`, `instanceMin`, `maxTotalUses`,
 `namePrefix`, `startupWaitSeconds`, `ciUser`, `ipConfig`, `nameserver`, `searchDomain`.
 
-For templates with `osType: WINDOWS`, `remoteFs` is required and the sync rejects a file that omits
-it. The cloud-init keys (`ciUser`, `ipConfig`, `nameserver`, `searchDomain`) are ignored at
-provision time for Windows templates, so inheriting them from `agentDefaults` is harmless.
-`javaDistribution` is not ignored: set it to `NONE` explicitly (the Java auto-install uses apt over
-SSH and is Linux-only).
+For templates with `osType: WINDOWS`, `remoteFs` is required and `javaDistribution` must be `NONE`
+(Java auto-install is Linux-only); the sync rejects a file that breaks either rule, including a
+non-`NONE` `javaDistribution` inherited from `agentDefaults`. The cloud-init keys (`ciUser`,
+`ipConfig`, `nameserver`, `searchDomain`) are ignored at provision time for Windows templates, so
+inheriting those from `agentDefaults` is harmless.
 
 ### Behavior
 

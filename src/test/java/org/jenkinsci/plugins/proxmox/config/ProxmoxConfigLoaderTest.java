@@ -609,4 +609,67 @@ class ProxmoxConfigLoaderTest {
         assertTrue(result.errors().stream().anyMatch(e -> e.contains("Remote FS Root")),
                 "Error should mention Remote FS Root, but errors were: " + result.errors());
     }
+
+    @Test
+    void createProxmoxTemplate_windowsWithJavaDistributionThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "win-builder");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9001);
+        config.put("labelString", "windows");
+        config.put("numExecutors", 1);
+        config.put("osType", "WINDOWS");
+        config.put("remoteFs", "C:\\Users\\jenkins\\agent");
+        config.put("javaDistribution", "OPENJDK");
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> loader.createProxmoxTemplate(config));
+        assertTrue(e.getMessage().contains("Java Distribution"),
+                "Error should mention Java Distribution, but was: " + e.getMessage());
+    }
+
+    @Test
+    void createProxmoxTemplate_windowsWithExplicitNoneJavaDistributionOk() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "win-builder");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9001);
+        config.put("labelString", "windows");
+        config.put("numExecutors", 1);
+        config.put("osType", "WINDOWS");
+        config.put("remoteFs", "C:\\Users\\jenkins\\agent");
+        config.put("javaDistribution", "NONE");
+
+        ProxmoxTemplate template = loader.createProxmoxTemplate(config);
+
+        assertEquals(JavaDistribution.NONE, template.getJavaDistribution());
+    }
+
+    @Test
+    void processYamlAndPersistConfig_windowsJavaDistributionInheritedFromDefaultsIsAnError() throws Exception {
+        Yaml yaml = new Yaml();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> yamlData = yaml.load(
+                "cloudConfigurations:\n"
+                + "  testCluster:\n"
+                + "    name: \"Test Cloud\"\n"
+                + "agentDefaults:\n"
+                + "  javaDistribution: OPENJDK\n"
+                + "agentConfigurations:\n"
+                + "  win-builder:\n"
+                + "    cloudIds: [\"testCluster\"]\n"
+                + "    node: \"pve1\"\n"
+                + "    name: \"win-builder\"\n"
+                + "    labelString: \"windows\"\n"
+                + "    templateVmId: 9001\n"
+                + "    osType: WINDOWS\n"
+                + "    remoteFs: 'C:\\Users\\jenkins\\agent'\n");
+
+        ProxmoxSyncResult result = loader.processYamlAndPersistConfig(yamlData, j.jenkins);
+
+        assertFalse(result.isSuccess());
+        assertFalse(result.errors().isEmpty());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("Java Distribution")),
+                "Error should mention Java Distribution, but errors were: " + result.errors());
+    }
 }
