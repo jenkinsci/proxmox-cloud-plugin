@@ -37,7 +37,7 @@
     </f:entry>
 
     <f:entry title="VM Username" field="ciUser">
-        <f:textbox clazz="required" class="proxmox-ciUser"/>
+        <f:textbox class="proxmox-ciUser"/>
     </f:entry>
 
     <f:entry title="SSH Credentials" field="credentialsId">

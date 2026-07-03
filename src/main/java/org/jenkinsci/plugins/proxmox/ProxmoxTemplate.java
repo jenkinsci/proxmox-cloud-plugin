@@ -340,8 +340,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         this.startupWaitSeconds = v;
     }
     @DataBoundSetter public void setCiUser(String v) {
-        if (v == null || v.isBlank()) throw new IllegalArgumentException("VM Username is required");
-        this.ciUser = v;
+        this.ciUser = (v == null || v.isBlank()) ? null : v;
     }
     @DataBoundSetter public void setIpConfig(String v) { this.ipConfig = v; }
     @DataBoundSetter public void setNameserver(String v) { this.nameserver = v; }
