@@ -358,10 +358,16 @@ class ProxmoxCloudTest {
         try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
             assertEquals(FormValidation.Kind.OK, d.doCheckApiUrl("").kind);          // would normally error
             assertEquals(FormValidation.Kind.OK, d.doCheckApiUrl("not-a-url").kind); // would normally error
+            assertEquals(FormValidation.Kind.OK, d.doCheckStartVmId(-1).kind);
+            assertEquals(FormValidation.Kind.OK, d.doCheckOrphanCleanupGracePeriodSeconds(0).kind);
+            assertEquals(FormValidation.Kind.OK, d.doCheckOrphanCleanupPeriodSeconds(0).kind);
         }
         try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
             assertEquals(FormValidation.Kind.ERROR, d.doCheckApiUrl("").kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckApiUrl("not-a-url").kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckStartVmId(-1).kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckOrphanCleanupGracePeriodSeconds(0).kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckOrphanCleanupPeriodSeconds(0).kind);
         }
     }
 
