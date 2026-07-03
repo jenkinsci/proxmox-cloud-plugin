@@ -1,0 +1,20 @@
+<div>
+    <p>
+        A <a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/regex/Pattern.html">Java regular expression</a>
+        matched against the entire name of each template VM on the configured node. The pattern controls how
+        tight or loose the match is: <code>jenkins-agent-.*</code> matches every name with that prefix, while
+        <code>jenkins-agent-\d{4}-\d{2}-\d{2}</code> matches only date-stamped names. The whole name must match,
+        so use <code>.*</code> around a fragment to match it anywhere.
+    </p>
+    <p>
+        The expression is re-evaluated every time an agent is provisioned. When several templates match, the most
+        recently created wins: highest <code>ctime</code> from the VM config's <code>meta</code> property; templates
+        without a <code>ctime</code> (created before PVE 7.1, or restored from a backup) count as oldest; ties go to
+        the highest VM id. This suits templates that are rebuilt on a schedule under fresh VM ids: new agents pick up
+        the newest build automatically.
+    </p>
+    <p>
+        Provisioning fails when no template matches, so saving with zero current matches is allowed (the match count
+        shown below this field is informational).
+    </p>
+</div>

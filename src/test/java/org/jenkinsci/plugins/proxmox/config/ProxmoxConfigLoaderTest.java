@@ -327,6 +327,90 @@ class ProxmoxConfigLoaderTest {
     }
 
     @Test
+    void createProxmoxTemplate_nameRegexModeWithoutTemplateVmId() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "dyn");
+        config.put("node", "pve1");
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        config.put("templateSelectionMode", "NAME_REGEX");
+        config.put("templateNameRegex", "agent-.*");
+
+        ProxmoxTemplate template = loader.createProxmoxTemplate(config);
+
+        assertEquals(TemplateSelectionMode.NAME_REGEX, template.getTemplateSelectionMode());
+        assertEquals("agent-.*", template.getTemplateNameRegex());
+        assertEquals(0, template.getTemplateVmId());
+    }
+
+    @Test
+    void createProxmoxTemplate_tagMode() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "dyn");
+        config.put("node", "pve1");
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        config.put("templateSelectionMode", "TAG");
+        config.put("templateTag", "jenkins");
+
+        ProxmoxTemplate template = loader.createProxmoxTemplate(config);
+
+        assertEquals(TemplateSelectionMode.TAG, template.getTemplateSelectionMode());
+        assertEquals("jenkins", template.getTemplateTag());
+    }
+
+    @Test
+    void createProxmoxTemplate_nameRegexModeMissingRegexThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "dyn");
+        config.put("node", "pve1");
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        config.put("templateSelectionMode", "NAME_REGEX");
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> loader.createProxmoxTemplate(config));
+        assertTrue(e.getMessage().contains("templateNameRegex"), e.getMessage());
+    }
+
+    @Test
+    void createProxmoxTemplate_tagModeMissingTagThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "dyn");
+        config.put("node", "pve1");
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        config.put("templateSelectionMode", "TAG");
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> loader.createProxmoxTemplate(config));
+        assertTrue(e.getMessage().contains("templateTag"), e.getMessage());
+    }
+
+    @Test
+    void createProxmoxTemplate_invalidRegexThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "dyn");
+        config.put("node", "pve1");
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        config.put("templateSelectionMode", "NAME_REGEX");
+        config.put("templateNameRegex", "[unclosed");
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> loader.createProxmoxTemplate(config));
+        assertTrue(e.getMessage().contains("regular expression"), e.getMessage());
+    }
+
+    @Test
+    void createProxmoxTemplate_invalidSelectionModeThrows() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "dyn");
+        config.put("node", "pve1");
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        config.put("templateSelectionMode", "SOMETHING_ELSE");
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(config));
+    }
+
+    @Test
     void createProxmoxTemplate_onlyRequiredFields() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("name", "basic");

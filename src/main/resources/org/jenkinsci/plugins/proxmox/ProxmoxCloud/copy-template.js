@@ -164,6 +164,14 @@ Behaviour.specify(
                     }
                     if (match) {
                         match.checked = sf.checked;
+                        // Radios also need the default (attribute) state: core repeatable.js
+                        // re-applies defaultChecked when it uniquifies radio names on the new
+                        // chunk, which would otherwise revert an unsaved selection change. Every
+                        // radio in the group passes through this loop, so the whole group ends
+                        // up consistent.
+                        if (type === "radio") {
+                            match.defaultChecked = sf.checked;
+                        }
                     }
                     continue;
                 }

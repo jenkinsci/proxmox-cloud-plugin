@@ -469,6 +469,7 @@ public class ProxmoxCloud extends Cloud {
                 // the reliable place to reject invalid configurations.
                 validateTemplateMinimums(cloud.getTemplates());
                 for (ProxmoxTemplate t : cloud.getTemplates()) {
+                    ProxmoxTemplate.validateTemplateSelection(t);
                     ProxmoxTemplate.validateWindowsRemoteFs(t);
                     ProxmoxTemplate.validateWindowsJavaDistribution(t);
                 }

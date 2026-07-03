@@ -1,0 +1,17 @@
+<div>
+    <p>
+        A Proxmox tag. Template VMs on the configured node carrying this exact tag are candidates; the comparison is
+        case-insensitive (Proxmox stores tags lowercase by default, as a semicolon-separated list).
+    </p>
+    <p>
+        The tag is re-evaluated every time an agent is provisioned. When several templates match, the most recently
+        created wins: highest <code>ctime</code> from the VM config's <code>meta</code> property; templates without a
+        <code>ctime</code> (created before PVE 7.1, or restored from a backup) count as oldest; ties go to the highest
+        VM id. This suits templates that are rebuilt on a schedule under fresh VM ids: new agents pick up the newest
+        build automatically.
+    </p>
+    <p>
+        Provisioning fails when no template matches, so saving with zero current matches is allowed (the match count
+        shown below this field is informational).
+    </p>
+</div>

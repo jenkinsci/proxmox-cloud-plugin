@@ -30,6 +30,7 @@ import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.OsType;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentials;
+import org.jenkinsci.plugins.proxmox.config.TemplateSelectionMode;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 import org.kohsuke.stapler.QueryParameter;
@@ -40,8 +41,11 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 
 public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
@@ -54,6 +58,9 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     private final String labelString;
     private final int numExecutors;
 
+    private TemplateSelectionMode templateSelectionMode = TemplateSelectionMode.STATIC_ID;
+    private String templateNameRegex;
+    private String templateTag;
     private OsType osType = OsType.LINUX;
     private CloneStrategy cloneStrategy = CloneStrategy.FULL;
     private String targetStorage;
@@ -110,8 +117,9 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         var log = listener.getLogger();
         ProxmoxClient client = cloud.getClient();
 
+        int sourceVmId = resolveTemplateVmId(client, log);
         String vmName = namePrefix + newVmId;
-        log.println("[Proxmox] Cloning template " + templateVmId + " → VM " + newVmId + " (" + vmName + ")");
+        log.println("[Proxmox] Cloning template " + sourceVmId + " → VM " + newVmId + " (" + vmName + ")");
 
         CloneOptions cloneOpts = new CloneOptions(
                 newVmId, vmName,
@@ -119,7 +127,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                 cloneStrategy == CloneStrategy.FULL,
                 targetStorage, targetPool);
 
-        String upid = client.cloneVm(node, templateVmId, cloneOpts);
+        String upid = client.cloneVm(node, sourceVmId, cloneOpts);
         client.waitForTask(node, upid, cloud.getOperationTimeout());
         log.println("[Proxmox] Clone complete");
 
@@ -157,6 +165,24 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                 launcher,
                 cloud.name, name, node, newVmId,
                 idleTerminationMinutes, maxTotalUses, activityId);
+    }
+
+    /**
+     * The VM id to clone from. Static mode returns the configured id without touching the API;
+     * dynamic modes resolve the regex/tag against the node's templates at every provision, so a
+     * template rebuilt under a fresh id is picked up automatically. Throws
+     * {@link org.jenkinsci.plugins.proxmox.api.ProxmoxException} when nothing matches.
+     */
+    int resolveTemplateVmId(ProxmoxClient client, java.io.PrintStream log) {
+        TemplateSelectionMode selectionMode = getTemplateSelectionMode();
+        if (selectionMode == TemplateSelectionMode.STATIC_ID) {
+            return templateVmId;
+        }
+        VirtualMachine winner = TemplateResolver.resolve(
+                client, node, selectionMode, templateNameRegex, templateTag);
+        log.println("[Proxmox] Template selection (" + selectionMode + ") resolved to VM " + winner.vmid()
+                + (winner.name() != null ? " (" + winner.name() + ")" : ""));
+        return winner.vmid();
     }
 
     private String derivePublicKeyFromCredential(java.io.PrintStream log) {
@@ -261,6 +287,12 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public String getName() { return name; }
     public String getNode() { return node; }
     public int getTemplateVmId() { return templateVmId; }
+    public TemplateSelectionMode getTemplateSelectionMode() {
+        // Null for configs saved before dynamic selection existed; those cloned a fixed id.
+        return templateSelectionMode != null ? templateSelectionMode : TemplateSelectionMode.STATIC_ID;
+    }
+    public String getTemplateNameRegex() { return templateNameRegex; }
+    public String getTemplateTag() { return templateTag; }
     public String getLabelString() { return labelString; }
     public int getNumExecutors() { return numExecutors; }
     public OsType getOsType() { return osType != null ? osType : OsType.LINUX; }
@@ -295,6 +327,25 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public String getSearchDomain() { return searchDomain; }
 
     // Setters
+    @DataBoundSetter public void setTemplateSelectionMode(TemplateSelectionMode v) {
+        this.templateSelectionMode = v != null ? v : TemplateSelectionMode.STATIC_ID;
+    }
+    @DataBoundSetter public void setTemplateNameRegex(String v) {
+        if (v == null || v.isBlank()) {
+            this.templateNameRegex = null;
+            return;
+        }
+        try {
+            Pattern.compile(v);
+        } catch (PatternSyntaxException e) {
+            throw new IllegalArgumentException(
+                    "Invalid template name regular expression: " + e.getMessage());
+        }
+        this.templateNameRegex = v;
+    }
+    @DataBoundSetter public void setTemplateTag(String v) {
+        this.templateTag = (v == null || v.isBlank()) ? null : v.trim();
+    }
     @DataBoundSetter public void setOsType(OsType v) { this.osType = v != null ? v : OsType.LINUX; }
     @DataBoundSetter public void setCloneStrategy(CloneStrategy v) { this.cloneStrategy = v; }
     @DataBoundSetter public void setTargetStorage(String v) { this.targetStorage = v; }
@@ -357,6 +408,32 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         return Jenkins.get().getDescriptorOrDie(getClass());
     }
 
+    static void validateTemplateSelection(ProxmoxTemplate template) throws Descriptor.FormException {
+        switch (template.getTemplateSelectionMode()) {
+            case STATIC_ID -> {
+                if (template.getTemplateVmId() <= 0) {
+                    throw new Descriptor.FormException(
+                            "Template VM ID must be selected when using a static template id",
+                            "templateVmId");
+                }
+            }
+            case NAME_REGEX -> {
+                if (template.getTemplateNameRegex() == null) {
+                    throw new Descriptor.FormException(
+                            "Template name regex is required when matching templates by name",
+                            "templateNameRegex");
+                }
+            }
+            case TAG -> {
+                if (template.getTemplateTag() == null) {
+                    throw new Descriptor.FormException(
+                            "Template tag is required when matching templates by tag",
+                            "templateTag");
+                }
+            }
+        }
+    }
+
     static void validateWindowsRemoteFs(ProxmoxTemplate template) throws Descriptor.FormException {
         if (template.getOsType() == OsType.WINDOWS && template.getRawRemoteFs() == null) {
             throw new Descriptor.FormException("Remote FS Root is required for Windows agents", "remoteFs");
@@ -374,6 +451,9 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
 
     @Extension
     public static class DescriptorImpl extends Descriptor<ProxmoxTemplate> {
+
+        /** Cap on per-match creation-time lookups in the form's match-count preview. */
+        private static final int MAX_WINNER_PREVIEW_MATCHES = 20;
 
         @Override
         public String getDisplayName() {
@@ -409,6 +489,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                         + "when a Java distribution is selected", "javaMajorVersion");
             }
             if (template != null) {
+                validateTemplateSelection(template);
                 validateWindowsRemoteFs(template);
                 validateWindowsJavaDistribution(template);
             }
@@ -604,11 +685,95 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         }
 
         @POST
-        public FormValidation doCheckTemplateVmId(@QueryParameter int value) {
+        public FormValidation doCheckTemplateVmId(@QueryParameter int value,
+                                                  @QueryParameter String templateSelectionMode) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
+            // The static-id select still submits (hidden, not disabled) in dynamic modes; don't
+            // flag its empty value then.
+            if (templateSelectionMode != null && !templateSelectionMode.isBlank()
+                    && !TemplateSelectionMode.STATIC_ID.name().equals(templateSelectionMode)) {
+                return FormValidation.ok();
+            }
             if (value <= 0) {
                 return FormValidation.error("Template VM ID must be positive");
             }
             return FormValidation.ok();
+        }
+
+        @POST
+        public FormValidation doCheckTemplateNameRegex(
+                @QueryParameter String value,
+                @QueryParameter String node,
+                @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
+                @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
+                @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
+            if (value == null || value.isBlank()) {
+                return FormValidation.error("Template name regex is required");
+            }
+            Predicate<VirtualMachine> matcher;
+            try {
+                matcher = TemplateResolver.nameRegexMatcher(value);
+            } catch (PatternSyntaxException e) {
+                return FormValidation.error("Invalid regular expression: " + e.getMessage());
+            }
+            return countTemplateMatches(node, apiUrl, credentialsId, ignoreSslErrors, matcher);
+        }
+
+        @POST
+        public FormValidation doCheckTemplateTag(
+                @QueryParameter String value,
+                @QueryParameter String node,
+                @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
+                @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
+                @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
+            if (value == null || value.isBlank()) {
+                return FormValidation.error("Template tag is required");
+            }
+            return countTemplateMatches(node, apiUrl, credentialsId, ignoreSslErrors,
+                    TemplateResolver.tagMatcher(value));
+        }
+
+        /**
+         * Informational match count for the dynamic selection fields. Zero matches is a warning,
+         * not an error: the selection is re-resolved at every provision, so a not-yet-built
+         * template is a legitimate saved state. Fetching each match's creation time costs one API
+         * call per match, so the "will currently clone" preview is skipped for absurd match counts.
+         */
+        private FormValidation countTemplateMatches(String node, String apiUrl, String credentialsId,
+                boolean ignoreSslErrors, Predicate<VirtualMachine> matcher) {
+            if (node == null || node.isBlank()) {
+                return FormValidation.ok();
+            }
+            ProxmoxClient client = tryCreateClient(apiUrl, credentialsId, ignoreSslErrors);
+            if (client == null) {
+                return FormValidation.ok();
+            }
+            try {
+                List<VirtualMachine> matches = client.getTemplates(node).stream()
+                        .filter(matcher).collect(Collectors.toList());
+                if (matches.isEmpty()) {
+                    return FormValidation.warning("Matches 0 templates on " + node
+                            + "; provisioning will fail until a template matches");
+                }
+                String message = "Matches " + matches.size()
+                        + (matches.size() == 1 ? " template" : " templates");
+                if (matches.size() <= MAX_WINNER_PREVIEW_MATCHES) {
+                    VirtualMachine winner = TemplateResolver.pickNewest(client, node, matches);
+                    message += "; will currently clone VM " + winner.vmid()
+                            + (winner.name() != null ? " (" + winner.name() + ")" : "");
+                }
+                return FormValidation.ok(message);
+            } catch (Exception e) {
+                return FormValidation.warning("Could not query Proxmox: " + e.getMessage());
+            }
         }
 
         @POST

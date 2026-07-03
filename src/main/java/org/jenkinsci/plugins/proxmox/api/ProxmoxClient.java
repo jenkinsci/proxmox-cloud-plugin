@@ -197,6 +197,37 @@ public class ProxmoxClient {
         return get("/api2/json/nodes/" + node + "/qemu/" + vmId + "/config", JsonObject.class);
     }
 
+    /**
+     * Creation time of a VM in unix seconds, read from the {@code ctime} component of the config's
+     * {@code meta} property. Returns -1 when the VM predates the property (PVE &lt; 7.1) or was
+     * restored from a backup that lost it.
+     */
+    public long getVmCreationTime(String node, int vmId) {
+        JsonObject config = getVmConfig(node, vmId);
+        if (!config.has("meta") || config.get("meta").isJsonNull()) {
+            return -1;
+        }
+        return parseCtimeFromMeta(config.get("meta").getAsString());
+    }
+
+    /**
+     * Extract {@code ctime} from a {@code meta} value like {@code "creation-qemu=9.0.2,ctime=1700000000"}.
+     * Returns -1 when absent or malformed. Package-private for unit testing.
+     */
+    static long parseCtimeFromMeta(String meta) {
+        for (String part : meta.split(",")) {
+            String trimmed = part.trim();
+            if (trimmed.startsWith("ctime=")) {
+                try {
+                    return Long.parseLong(trimmed.substring("ctime=".length()));
+                } catch (NumberFormatException e) {
+                    return -1;
+                }
+            }
+        }
+        return -1;
+    }
+
     public List<NetworkInterface> getVmNetworkInterfaces(String node, int vmId) {
         JsonObject data = get(
                 "/api2/json/nodes/" + node + "/qemu/" + vmId + "/agent/network-get-interfaces",
