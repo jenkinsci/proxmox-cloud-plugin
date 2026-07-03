@@ -17,6 +17,16 @@ mvn clean package -DskipTests   # build the HPI only
 
 The artifact is `target/proxmox-cloud.hpi`. To try it on a running Jenkins, install it via Manage Jenkins > Plugins > Advanced > Deploy Plugin, or drop the HPI into `$JENKINS_HOME/plugins/` and restart.
 
+## Code layout
+
+- `ProxmoxCloud`: cloud config and provisioning
+- `ProxmoxTemplate`: per-VM clone and cloud-init config
+- `ProxmoxLauncher`: IP discovery, Java install, SSH handoff
+- `ProxmoxRetentionStrategy`: idle and reuse-cap decisions
+- `ProxmoxOrphanCleanup`: reconciliation of leaked VMs and dead nodes
+- `api/`: Proxmox REST client and response models
+- `config/`: credentials, YAML config sync, and enums
+
 ## Tests
 
 Tests use JUnit 5 (Jupiter) with the Jenkins test harness and WireMock for the Proxmox REST API. Run them with `mvn test`. Please cover new behaviour with tests; the existing suites under `src/test/java` show the patterns for the API client, agent lifecycle, and config sync.

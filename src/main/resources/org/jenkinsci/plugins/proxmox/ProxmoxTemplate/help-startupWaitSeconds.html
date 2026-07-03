@@ -1,3 +1,5 @@
 <div>
-    Maximum seconds to wait for VM boot, guest agent IP, and SSH connectivity. Default: 60.
+    Maximum seconds to wait for VM boot, guest agent IP, SSH connectivity, and SSH authentication
+    to become ready. Default: 60. Windows clones finalise sysprep on first boot before SSH
+    authentication works, so 300 is recommended for Windows templates.
 </div>
