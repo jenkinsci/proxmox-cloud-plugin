@@ -257,10 +257,12 @@ class ProxmoxTemplateTest {
         try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
             assertEquals(FormValidation.Kind.OK, d.doCheckNode("").kind);
             assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("", "OPENJDK").kind);
+            assertEquals(FormValidation.Kind.OK, d.doCheckRemoteFs("", OsType.WINDOWS.name()).kind);
         }
         try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
             assertEquals(FormValidation.Kind.ERROR, d.doCheckNode("").kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckJavaMajorVersion("", "OPENJDK").kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckRemoteFs("", OsType.WINDOWS.name()).kind);
         }
     }
 

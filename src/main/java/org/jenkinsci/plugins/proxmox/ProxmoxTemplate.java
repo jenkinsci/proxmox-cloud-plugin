@@ -604,6 +604,9 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         @POST
         public FormValidation doCheckRemoteFs(@QueryParameter String value,
                                               @QueryParameter String osType) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
             if (OsType.WINDOWS.name().equals(osType) && (value == null || value.isBlank())) {
                 return FormValidation.error("Remote FS Root is required for Windows agents");
             }
