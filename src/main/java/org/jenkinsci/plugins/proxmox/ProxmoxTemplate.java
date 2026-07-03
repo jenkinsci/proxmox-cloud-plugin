@@ -687,6 +687,9 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         @POST
         public FormValidation doCheckTemplateVmId(@QueryParameter int value,
                                                   @QueryParameter String templateSelectionMode) {
+            if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
             // The static-id select still submits (hidden, not disabled) in dynamic modes; don't
             // flag its empty value then.
             if (templateSelectionMode != null && !templateSelectionMode.isBlank()
