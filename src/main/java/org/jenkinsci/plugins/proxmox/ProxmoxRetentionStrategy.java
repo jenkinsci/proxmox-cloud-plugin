@@ -26,7 +26,7 @@ public class ProxmoxRetentionStrategy extends RetentionStrategy<ProxmoxComputer>
         if (agent == null) {
             return true;
         }
-        return acceptsMoreTasks(agent.getMaxTotalUses(), agent.getTotalUses(), c.countBusy());
+        return acceptsMoreTasks(agent.getMaxTotalUses(), agent.getTotalUses());
     }
 
     @Override
@@ -83,18 +83,17 @@ public class ProxmoxRetentionStrategy extends RetentionStrategy<ProxmoxComputer>
     }
 
     /**
-     * Whether an agent can accept another task. In-flight builds ({@code busy}) are counted alongside
-     * completed uses because the use count only rises at task completion (see {@link
-     * ProxmoxBuildListener}); without it a multi-executor agent could dispatch several tasks that all
-     * slip under the cap before any completes. The reads are intentionally non-atomic: under the
-     * queue lock at dispatch time {@code busy} is stable, and the accept side is conservative, so the
-     * cap can never overshoot. Package-private and pure for unit testing.
+     * Whether an agent can accept another task. In-flight builds are already in the count:
+     * {@link ProxmoxBuildListener#taskAccepted} counts a use the moment a task is accepted, so no
+     * busy-executor term is needed. (Counting on completion instead left a window after the executor
+     * freed but before the completion hook ran in which a capped agent accepted another build.)
+     * Package-private and pure for unit testing.
      */
-    static boolean acceptsMoreTasks(int maxTotalUses, int totalUses, int busy) {
+    static boolean acceptsMoreTasks(int maxTotalUses, int totalUses) {
         if (maxTotalUses <= 0) {
             return true; // unlimited reuse
         }
-        return totalUses + busy < maxTotalUses;
+        return totalUses < maxTotalUses;
     }
 
     /**

@@ -16,9 +16,16 @@ import java.util.logging.Logger;
  * <p>Implemented as an {@link ExecutorListener} rather than a {@code RunListener}: for Pipeline jobs
  * the top-level {@code Run} executes as a flyweight task on the controller, while the work runs as
  * separate executor tasks inside {@code node {}} blocks. A {@code RunListener} keyed off
- * {@code run.getExecutor()} therefore never sees the agent. {@code taskCompleted} fires once per task
- * that actually ran on the agent's executor, covering freestyle builds and Pipeline {@code node}
- * blocks alike (mirrors how the EC2 plugin counts uses in its retention strategy).
+ * {@code run.getExecutor()} therefore never sees the agent. The hooks fire once per task that
+ * actually ran on the agent's executor, covering freestyle builds and Pipeline {@code node} blocks
+ * alike.
+ *
+ * <p>The use is counted in {@link #taskAccepted}, NOT on completion (mirroring how the EC2 plugin
+ * counts uses): the executor is freed around the time the completion hooks run, so a
+ * count-on-completion listener leaves a window in which the queue could dispatch the next build
+ * onto a capped agent while {@link ProxmoxRetentionStrategy#isAcceptingTasks} still reads the
+ * stale count. Counting on acceptance removes the window entirely: a running build is in the
+ * count from the moment it is assigned.
  */
 @Extension
 public class ProxmoxBuildListener implements ExecutorListener {
@@ -26,18 +33,21 @@ public class ProxmoxBuildListener implements ExecutorListener {
     private static final Logger LOGGER = Logger.getLogger(ProxmoxBuildListener.class.getName());
 
     @Override
-    public void taskCompleted(Executor executor, Queue.Task task, long durationMS) {
+    public void taskAccepted(Executor executor, Queue.Task task) {
         countUse(executor.getOwner());
+    }
+
+    @Override
+    public void taskCompleted(Executor executor, Queue.Task task, long durationMS) {
         reapIfExhausted(executor);
     }
 
     @Override
     public void taskCompletedWithProblems(Executor executor, Queue.Task task, long durationMS, Throwable problems) {
-        countUse(executor.getOwner());
         reapIfExhausted(executor);
     }
 
-    /** Increment the use count if the task ran on a Proxmox agent. Package-private for testing. */
+    /** Increment the use count if the task is starting on a Proxmox agent. Package-private for testing. */
     static void countUse(Computer computer) {
         if (computer instanceof ProxmoxComputer proxmoxComputer) {
             ProxmoxAgent agent = proxmoxComputer.getNode();

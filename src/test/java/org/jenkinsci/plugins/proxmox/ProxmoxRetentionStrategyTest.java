@@ -46,32 +46,26 @@ class ProxmoxRetentionStrategyTest {
 
     @Test
     void acceptsMoreTasksUnlimitedWhenCapNonPositive() {
-        // maxTotalUses <= 0 means unlimited reuse: always accept, whatever the counts.
-        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(0, 0, 0));
-        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(0, 99, 5));
-        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(-1, 99, 5));
+        // maxTotalUses <= 0 means unlimited reuse: always accept, whatever the count.
+        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(0, 0));
+        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(0, 99));
+        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(-1, 99));
     }
 
     @Test
     void acceptsMoreTasksBelowCap() {
-        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(3, 0, 0));
-        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(3, 2, 0));
+        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(3, 0));
+        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(3, 2));
     }
 
     @Test
     void acceptsMoreTasksRejectsAtOrAboveCap() {
-        assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(2, 2, 0));
-        assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(2, 3, 0));
-    }
-
-    @Test
-    void acceptsMoreTasksCountsInFlightBuilds() {
-        // Multi-executor: completed + in-flight must not exceed the cap, even though the use count
-        // only rises at completion. cap=2 with one completed + one running build => reject.
-        assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(2, 1, 1));
-        // cap=3: one completed + one running leaves room for exactly one more, but not two.
-        assertTrue(ProxmoxRetentionStrategy.acceptsMoreTasks(3, 1, 1));
-        assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(3, 1, 2));
+        // Uses are counted at task ACCEPTANCE (ProxmoxBuildListener.taskAccepted), so an in-flight
+        // build is already in totalUses and reaching the cap blocks further dispatch immediately,
+        // with no window around executor release for a queued build to slip through (EC2 parity).
+        assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(1, 1));
+        assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(2, 2));
+        assertFalse(ProxmoxRetentionStrategy.acceptsMoreTasks(2, 3));
     }
 
     // --- shouldTerminateForMaxUses: the idle-guarded check() termination ---
