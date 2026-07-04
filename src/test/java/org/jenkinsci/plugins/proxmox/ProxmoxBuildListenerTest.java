@@ -15,7 +15,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests the use-counting that drives "Builds Run" and {@code maxTotalUses}. The listener counts at the
- * executor level so it works for Pipeline {@code node} blocks, not just freestyle builds (issue #10).
+ * executor level so it works for Pipeline {@code node} blocks, not just freestyle builds (issue #10),
+ * and counts on {@code taskAccepted} (EC2-style) so a capped agent can never pick up a queued build
+ * in the window between its executor freeing and the completion hook running. The
+ * accepted-vs-completed wiring itself is exercised end to end by the smoke suite's recycle scenario.
  */
 @WithJenkins
 class ProxmoxBuildListenerTest {
