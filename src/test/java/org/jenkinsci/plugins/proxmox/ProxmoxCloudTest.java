@@ -18,6 +18,7 @@ import hudson.util.ListBoxModel;
 import hudson.util.Secret;
 import jenkins.model.Jenkins;
 import org.htmlunit.html.HtmlPage;
+import org.jenkinsci.plugins.cloudstats.CloudStatistics;
 import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
 import org.jenkinsci.plugins.cloudstats.TrackedPlannedNode;
 import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
@@ -514,6 +515,22 @@ class ProxmoxCloudTest {
         HttpResponse resp = cloud.doProvision("t");
         assertNotNull(resp);
         assertNotNull(j.jenkins.getNode("jenkins-agent-300"));
+    }
+
+    @Test
+    void doProvisionRenamesCloudStatsActivityToAgentName() throws Exception {
+        // Manual provisioning bypasses cloud-stats' CloudProvisioningListener (which performs the
+        // rename on the NodeProvisioner path), so doProvision must call onComplete itself or the
+        // Cloud Statistics page shows only template names for manually/warm-pool provisioned agents.
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        cloud.setTemplates(List.of(new ProxmoxTemplate("t2", "pve1", 9000, "linux", 1)));
+        stubProvisionSequence(301);
+
+        cloud.doProvision("t2");
+
+        assertTrue(CloudStatistics.get().getActivities().stream()
+                        .anyMatch(a -> "jenkins-agent-301".equals(a.getName())),
+                "no cloud-stats activity carrying the agent name");
     }
 
     @Test

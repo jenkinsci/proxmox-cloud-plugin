@@ -241,7 +241,12 @@ public class ProxmoxCloud extends Cloud {
         for (int i = 0; i < futures.size(); i++) {
             ProvisioningActivity.Id activityId = activityIds.get(i);
             try {
-                jenkins.addNode(futures.get(i).get());
+                Node node = futures.get(i).get();
+                // Renames the activity from the template name to the agent name (cloud-stats'
+                // CloudProvisioningListener does this on the NodeProvisioner path; manual paths
+                // must call it themselves or the Cloud Statistics page shows only template names).
+                CloudStatistics.ProvisioningListener.get().onComplete(activityId, node);
+                jenkins.addNode(node);
                 added++;
             } catch (Exception e) {
                 CloudStatistics.ProvisioningListener.get().onFailure(activityId, e);
@@ -317,6 +322,8 @@ public class ProxmoxCloud extends Cloud {
             } finally {
                 releaseVmId(vmId);
             }
+            // Rename the activity from the template name to the agent name (see provisionForMinimum).
+            CloudStatistics.ProvisioningListener.get().onComplete(activityId, agent);
             jenkins.addNode(agent);
             return new HttpRedirect("/computer/" + agent.getNodeName());
         } catch (Exception e) {
