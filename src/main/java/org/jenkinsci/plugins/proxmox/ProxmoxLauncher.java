@@ -29,6 +29,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -37,6 +44,17 @@ public class ProxmoxLauncher extends ComputerLauncher {
     private static final Logger LOGGER = Logger.getLogger(ProxmoxLauncher.class.getName());
     private static final int SSH_PORT = 22;
     private static final int SOCKET_TIMEOUT_MS = 3000;
+
+    /**
+     * Hard per-attempt cap on a connect+authenticate, and on each Java-install command. trilead
+     * performs its post-key-exchange reads (the auth handshake, command output) with no socket
+     * timeout, so a stalled sshd blocks the calling thread forever. The common trigger is a Windows
+     * agent whose OpenSSH accepts the TCP connection and completes key exchange while still booting,
+     * then goes silent before answering user-auth. Each attempt runs on a worker thread and its
+     * connection is force-closed past this bound, so {@link #waitForSshReady}'s retry loop can make
+     * progress and honour its own {@code startupWaitSeconds} deadline instead of hanging.
+     */
+    private static final long SSH_ATTEMPT_TIMEOUT_MS = 30_000;
 
     private final String sshCredentialsId;
     private final String javaPath;
@@ -186,20 +204,18 @@ public class ProxmoxLauncher extends ComputerLauncher {
             throw new IOException("SSH credentials not found: " + sshCredentialsId);
         }
 
-        try (SshConnection conn = sshConnectionFactory().open(host, SSH_PORT)) {
-            if (!authenticate(conn, creds)) {
-                throw new IOException("SSH authentication failed for Java installation");
-            }
-
+        long timeoutMs = attemptTimeoutMs();
+        ExecutorService exec = newSshExecutor(host);
+        try (SshConnection conn = connectAndAuth(host, creds, exec, timeoutMs)) {
             String command = "which java >/dev/null 2>&1 && java -version 2>&1 || "
                     + "sudo bash -c '" + installCmd.replace("'", "'\\''") + "'";
-            execRemoteCommand(conn, command, log, "Java installation");
+            execRemoteCommand(conn, command, log, "Java installation", exec, timeoutMs);
 
             String verifyCmd = "java -version 2>&1"
                     + " || { JAVA_BIN=$(find /usr/lib/jvm -name java -path '*/bin/java' -type f 2>/dev/null | head -1);"
                     + " [ -n \"$JAVA_BIN\" ] && sudo ln -sf \"$JAVA_BIN\" /usr/local/bin/java"
                     + " && java -version 2>&1; }";
-            String output = execRemoteCommand(conn, verifyCmd, log, "Java verification");
+            String output = execRemoteCommand(conn, verifyCmd, log, "Java verification", exec, timeoutMs);
             // Log the full `java -version` banner (3 lines). Amazon Corretto reports "openjdk
             // version ..." on the first line like any OpenJDK build; its "Corretto-..." identity is
             // on the Runtime Environment / VM lines, so printing only the first line is misleading.
@@ -208,12 +224,30 @@ public class ProxmoxLauncher extends ComputerLauncher {
                     .map(String::strip)
                     .filter(line -> !line.isEmpty())
                     .forEach(line -> log.println("[Proxmox]   " + line));
+        } finally {
+            exec.shutdownNow();
         }
     }
 
+    /**
+     * Run one remote command, bounded by {@code timeoutMs}. The command executes on a worker thread
+     * ({@code exec}) so a stalled channel read cannot hang the launch; on timeout the connection is
+     * force-closed (which unblocks the trilead worker) and the command is treated as failed.
+     */
     private String execRemoteCommand(SshConnection conn, String command, PrintStream log,
-                                      String description) throws IOException, InterruptedException {
-        SshExecResult result = conn.exec(command, startupWaitSeconds);
+                                      String description, ExecutorService exec, long timeoutMs)
+            throws IOException, InterruptedException {
+        Future<SshExecResult> future = exec.submit(() -> conn.exec(command, startupWaitSeconds));
+        SshExecResult result;
+        try {
+            result = future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            closeQuietly(conn);
+            throw new IOException(description + " timed out after " + timeoutMs + "ms");
+        } catch (ExecutionException e) {
+            throw unwrap(e, description + " failed");
+        }
         Integer exitCode = result.exitStatus();
         if (exitCode == null || exitCode != 0) {
             log.println("[Proxmox] " + description + " output: " + result.stdout());
@@ -238,6 +272,76 @@ public class ProxmoxLauncher extends ComputerLauncher {
         }
 
         throw new IOException("Unsupported credential type: " + creds.getClass().getName());
+    }
+
+    /**
+     * Open an SSH connection and authenticate, bounded by {@code timeoutMs}. The attempt runs on a
+     * {@code exec} worker thread; if it exceeds the bound the future is cancelled and the (possibly
+     * half-open) connection is force-closed, which is the only way to unblock a trilead thread
+     * parked in a post-key-exchange read (trilead has no socket read timeout). On success the
+     * returned connection is authenticated and owned by the caller, which must close it. A rejected
+     * credential surfaces as an {@code IOException} whose message starts with "SSH authentication
+     * rejected" so callers can distinguish it from a retryable connection-level failure.
+     */
+    private SshConnection connectAndAuth(String host, StandardUsernameCredentials creds,
+                                         ExecutorService exec, long timeoutMs)
+            throws IOException, InterruptedException {
+        AtomicReference<SshConnection> opened = new AtomicReference<>();
+        Future<SshConnection> future = exec.submit(() -> {
+            SshConnection conn = sshConnectionFactory().open(host, SSH_PORT);
+            opened.set(conn);
+            if (!authenticate(conn, creds)) {
+                conn.close();
+                throw new IOException("SSH authentication rejected for user " + creds.getUsername());
+            }
+            return conn;
+        });
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            closeQuietly(opened.get());
+            throw new IOException("SSH connect/auth timed out after " + timeoutMs + "ms");
+        } catch (ExecutionException e) {
+            closeQuietly(opened.get());
+            throw unwrap(e, "SSH connect/auth failed");
+        }
+    }
+
+    /** Per-attempt timeout: the smaller of the startup budget and {@link #SSH_ATTEMPT_TIMEOUT_MS}. */
+    private long attemptTimeoutMs() {
+        return Math.min((long) startupWaitSeconds * 1000, SSH_ATTEMPT_TIMEOUT_MS);
+    }
+
+    /** Daemon-threaded pool for bounded SSH attempts; a leaked (force-closed) attempt never blocks JVM exit. */
+    private static ExecutorService newSshExecutor(String host) {
+        return Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "proxmox-ssh-" + host);
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    /** Unwrap a task failure: rethrow its cause when it is already an IOException/RuntimeException, else wrap it. */
+    private static IOException unwrap(ExecutionException e, String context) {
+        Throwable cause = e.getCause();
+        if (cause instanceof IOException io) {
+            return io;
+        }
+        if (cause instanceof RuntimeException re) {
+            throw re;
+        }
+        return new IOException(context, cause != null ? cause : e);
+    }
+
+    private static void closeQuietly(SshConnection conn) {
+        if (conn != null) {
+            try {
+                conn.close();
+            } catch (RuntimeException ignored) {
+                // best-effort: we are unblocking a stalled attempt, a close failure adds nothing
+            }
+        }
     }
 
     private SshConnectionFactory sshConnectionFactory() {
@@ -378,10 +482,15 @@ public class ProxmoxLauncher extends ComputerLauncher {
 
     /**
      * Waits until a full SSH auth handshake succeeds on {@code host}. Called after
-     * {@link #waitForSsh} (which only checks TCP reachability) because some SSH servers — notably
-     * Windows OpenSSH on first boot — accept TCP connections before their auth subsystem is ready,
-     * causing the connection to reset mid-handshake. Retries on any connection-level failure;
-     * throws immediately if the server explicitly rejects the credentials, since retrying won't help.
+     * {@link #waitForSsh} (which only checks TCP reachability) because some SSH servers (notably
+     * Windows OpenSSH on first boot) accept TCP connections before their auth subsystem is ready.
+     * Such a server may reset the connection mid-handshake (a fast, retryable failure) or, worse,
+     * complete key exchange and then go silent before answering user-auth. trilead has no socket
+     * read timeout past key exchange, so the second case would block forever; each attempt is
+     * therefore bounded by {@link #attemptTimeoutMs()} via {@link #connectAndAuth} so the loop keeps
+     * its {@code startupWaitSeconds} deadline. Retries on any connection-level failure or attempt
+     * timeout; throws immediately if the server explicitly rejects the credentials, since retrying
+     * won't help.
      */
     // Package-private for unit testing.
     void waitForSshReady(String host, PrintStream log) throws IOException, InterruptedException {
@@ -396,27 +505,29 @@ public class ProxmoxLauncher extends ComputerLauncher {
 
         log.println("[Proxmox] Verifying SSH auth on " + host + "...");
         long deadline = System.currentTimeMillis() + (long) startupWaitSeconds * 1000;
+        long timeoutMs = attemptTimeoutMs();
 
+        ExecutorService exec = newSshExecutor(host);
         IOException lastError = null;
-        while (System.currentTimeMillis() < deadline) {
-            try (SshConnection conn = sshConnectionFactory().open(host, SSH_PORT)) {
-                boolean ok = authenticate(conn, creds);
-                if (!ok) {
-                    throw new IOException("SSH authentication rejected for user " + creds.getUsername());
+        try {
+            while (System.currentTimeMillis() < deadline) {
+                try (SshConnection conn = connectAndAuth(host, creds, exec, timeoutMs)) {
+                    log.println("[Proxmox] SSH auth verified");
+                    return;
+                } catch (IOException e) {
+                    String msg = e.getMessage();
+                    if (msg != null && msg.startsWith("SSH authentication rejected")
+                            || msg != null && msg.startsWith("Unsupported credential type")) {
+                        throw e;
+                    }
+                    lastError = e;
+                    LOGGER.log(Level.FINE, "SSH auth not ready on " + host, e);
+                    log.println("[Proxmox] SSH not ready yet, retrying...");
                 }
-                log.println("[Proxmox] SSH auth verified");
-                return;
-            } catch (IOException e) {
-                String msg = e.getMessage();
-                if (msg != null && msg.startsWith("SSH authentication rejected")
-                        || msg != null && msg.startsWith("Unsupported credential type")) {
-                    throw e;
-                }
-                lastError = e;
-                LOGGER.log(Level.FINE, "SSH auth not ready on " + host, e);
-                log.println("[Proxmox] SSH not ready yet, retrying...");
+                Thread.sleep(2000);
             }
-            Thread.sleep(2000);
+        } finally {
+            exec.shutdownNow();
         }
 
         throw new ProxmoxException("SSH auth not ready on " + host
