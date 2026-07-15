@@ -269,4 +269,57 @@ class ProxmoxLauncherSshTest {
         launcher.setSshConnectionFactory((host, port) -> { throw new java.io.IOException("Connection reset"); });
         assertThrows(ProxmoxException.class, () -> launcher.waitForSshReady("1.2.3.4", nullLog()));
     }
+
+    @Test
+    void waitForSshReadyBoundsAndForceClosesAHangingAuth() throws Exception {
+        // A server that accepts the connection then stalls during auth (the Windows-first-boot case)
+        // must NOT hang the launch: the attempt is force-closed past its timeout, retried, and the
+        // wait gives up within the startup budget. startupWaitSeconds=1 => 1s per-attempt bound.
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcher(JavaDistribution.NONE);
+        java.util.concurrent.atomic.AtomicInteger closes = new java.util.concurrent.atomic.AtomicInteger();
+        launcher.setSshConnectionFactory((host, port) -> new ProxmoxLauncher.SshConnection() {
+            @Override public boolean authenticateWithPublicKey(String u, char[] k) throws java.io.IOException { return block(); }
+            @Override public boolean authenticateWithPassword(String u, String p) throws java.io.IOException { return block(); }
+            private boolean block() throws java.io.IOException {
+                try {
+                    Thread.sleep(10_000); // longer than the per-attempt bound; simulates a silent server
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new java.io.IOException("interrupted");
+                }
+                return true;
+            }
+            @Override public ProxmoxLauncher.SshExecResult exec(String c, int t) { return new ProxmoxLauncher.SshExecResult("", "", 0); }
+            @Override public void close() { closes.incrementAndGet(); }
+        });
+        long start = System.currentTimeMillis();
+        assertThrows(ProxmoxException.class, () -> launcher.waitForSshReady("1.2.3.4", nullLog()));
+        long elapsed = System.currentTimeMillis() - start;
+        assertTrue(elapsed < 8_000, "must give up within the startup budget, not block on the hung auth (was " + elapsed + "ms)");
+        assertTrue(closes.get() >= 1, "a timed-out auth attempt must force-close the connection to unblock the worker");
+    }
+
+    @Test
+    void installJavaBoundsAndForceClosesAHangingCommand() throws Exception {
+        // A command whose channel read never returns must not hang installJava: the exec is
+        // force-closed past its timeout and surfaces as an IOException. startupWaitSeconds=1.
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcher(JavaDistribution.OPENJDK);
+        java.util.concurrent.atomic.AtomicInteger closes = new java.util.concurrent.atomic.AtomicInteger();
+        launcher.setSshConnectionFactory((host, port) -> new ProxmoxLauncher.SshConnection() {
+            @Override public boolean authenticateWithPublicKey(String u, char[] k) { return true; }
+            @Override public boolean authenticateWithPassword(String u, String p) { return true; }
+            @Override public ProxmoxLauncher.SshExecResult exec(String c, int t) throws InterruptedException {
+                Thread.sleep(10_000); // stuck channel read
+                return new ProxmoxLauncher.SshExecResult("", "", 0);
+            }
+            @Override public void close() { closes.incrementAndGet(); }
+        });
+        long start = System.currentTimeMillis();
+        assertThrows(java.io.IOException.class, () -> launcher.installJava("1.2.3.4", nullLog()));
+        long elapsed = System.currentTimeMillis() - start;
+        assertTrue(elapsed < 8_000, "install must not hang on a stuck command (was " + elapsed + "ms)");
+        assertTrue(closes.get() >= 1, "a timed-out command must force-close the connection");
+    }
 }
