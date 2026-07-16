@@ -63,6 +63,11 @@ public class ProxmoxLauncher extends ComputerLauncher {
     private final String staticIp;
     private final JavaDistribution javaDistribution;
     private final int javaMajorVersion;
+    // Wrap SSHLauncher's agent-start command (setPrefix/SuffixStartSlaveCmd). Used for Windows
+    // PowerShell 5.x agents, whose shell rejects the "&&" SSHLauncher hardcodes, by routing the
+    // command through cmd (prefix "cmd /c '", suffix "'"); blank for shells that need no wrapping.
+    private final String startCommandPrefix;
+    private final String startCommandSuffix;
 
     private transient SSHLauncher delegate;
     // Opens SSH sessions for the Java auto-install. Lazily defaulted to a trilead-backed factory;
@@ -72,7 +77,8 @@ public class ProxmoxLauncher extends ComputerLauncher {
 
     public ProxmoxLauncher(String sshCredentialsId, String javaPath, String jvmOptions,
                             int startupWaitSeconds, String staticIp,
-                            JavaDistribution javaDistribution, int javaMajorVersion) {
+                            JavaDistribution javaDistribution, int javaMajorVersion,
+                            String startCommandPrefix, String startCommandSuffix) {
         this.sshCredentialsId = sshCredentialsId;
         this.javaPath = javaPath != null && !javaPath.isBlank() ? javaPath : "java";
         this.jvmOptions = jvmOptions;
@@ -80,6 +86,8 @@ public class ProxmoxLauncher extends ComputerLauncher {
         this.staticIp = staticIp;
         this.javaDistribution = javaDistribution != null ? javaDistribution : JavaDistribution.NONE;
         this.javaMajorVersion = javaMajorVersion;
+        this.startCommandPrefix = startCommandPrefix;
+        this.startCommandSuffix = startCommandSuffix;
     }
 
     @Override
@@ -170,6 +178,14 @@ public class ProxmoxLauncher extends ComputerLauncher {
         if (javaDistribution == JavaDistribution.NONE
                 && javaPath != null && !javaPath.isBlank() && !"java".equals(javaPath)) {
             launcher.setJavaPath(javaPath);
+        }
+        // Windows PowerShell 5.x cannot parse the "&&" SSHLauncher builds into its start command;
+        // wrapping it as cmd /c '<command>' (prefix + suffix) routes it through cmd for that shell.
+        if (startCommandPrefix != null && !startCommandPrefix.isBlank()) {
+            launcher.setPrefixStartSlaveCmd(startCommandPrefix);
+        }
+        if (startCommandSuffix != null && !startCommandSuffix.isBlank()) {
+            launcher.setSuffixStartSlaveCmd(startCommandSuffix);
         }
     }
 
@@ -458,7 +474,13 @@ public class ProxmoxLauncher extends ComputerLauncher {
                 for (NetworkInterface iface : interfaces) {
                     if ("lo".equals(iface.name()) || iface.ipAddresses() == null) continue;
                     for (NetworkInterface.IpAddress addr : iface.ipAddresses()) {
-                        if ("ipv4".equals(addr.ipAddressType()) && !addr.ipAddress().startsWith("127.")) {
+                        // Skip loopback and link-local (169.254.x.x): Windows assigns an APIPA
+                        // address early in boot before DHCP completes, and the guest agent reports
+                        // it. Grabbing it would wedge the launch on an unroutable IP; instead keep
+                        // polling until a real lease appears.
+                        if ("ipv4".equals(addr.ipAddressType())
+                                && !addr.ipAddress().startsWith("127.")
+                                && !addr.ipAddress().startsWith("169.254.")) {
                             return addr.ipAddress();
                         }
                     }

@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ProxmoxLauncherTest {
 
     private static ProxmoxLauncher launcher(String javaPath, String jvmOptions, JavaDistribution dist) {
-        return new ProxmoxLauncher("ssh-cred", javaPath, jvmOptions, 60, null, dist, 21);
+        return new ProxmoxLauncher("ssh-cred", javaPath, jvmOptions, 60, null, dist, 21, "", "");
     }
 
     private static SSHLauncher delegate() {
@@ -74,6 +74,25 @@ class ProxmoxLauncherTest {
         SSHLauncher d = delegate();
         launcher("/opt/jdk/bin/java", "", JavaDistribution.OPENJDK).configureDelegate(d);
         assertEquals("", d.getJavaPath());
+    }
+
+    @Test
+    void startCommandPrefixAndSuffixForwardedWhenSet() {
+        // Windows PowerShell 5.x agents wrap the start command as cmd /c '<command>'.
+        SSHLauncher d = delegate();
+        new ProxmoxLauncher("ssh-cred", "java", "", 60, null, JavaDistribution.NONE, 21, "cmd /c '", "'")
+                .configureDelegate(d);
+        assertEquals("cmd /c '", d.getPrefixStartSlaveCmd());
+        assertEquals("'", d.getSuffixStartSlaveCmd());
+    }
+
+    @Test
+    void blankStartCommandWrapperNotForwarded() {
+        // Linux agents and Windows cmd/PowerShell-7 agents pass no wrapper, leaving SSHLauncher's defaults.
+        SSHLauncher d = delegate();
+        launcher("java", "", JavaDistribution.NONE).configureDelegate(d);
+        assertEquals("", d.getPrefixStartSlaveCmd()); // fixNull default when unset
+        assertEquals("", d.getSuffixStartSlaveCmd());
     }
 
     // shortTitle keeps the cloud-stats attempts table on one line; the full trace is on the detail page.

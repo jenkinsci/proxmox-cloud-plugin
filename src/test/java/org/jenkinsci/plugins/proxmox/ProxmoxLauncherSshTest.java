@@ -52,7 +52,7 @@ class ProxmoxLauncherSshTest {
     }
 
     private static ProxmoxLauncher launcher(JavaDistribution dist) {
-        return new ProxmoxLauncher("ssh-cred", "java", "", 1, null, dist, 21);
+        return new ProxmoxLauncher("ssh-cred", "java", "", 1, null, dist, 21, "", "");
     }
 
     /** A fake SSH session that records nothing beyond the canned auth result and exit status. */
@@ -144,7 +144,7 @@ class ProxmoxLauncherSshTest {
 
     @Test
     void installJavaThrowsWhenCredentialMissing() {
-        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null, JavaDistribution.OPENJDK, 21);
+        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null, JavaDistribution.OPENJDK, 21, "", "");
         assertThrows(java.io.IOException.class, () -> launcher.installJava("1.2.3.4", nullLog()));
     }
 
@@ -173,7 +173,7 @@ class ProxmoxLauncherSshTest {
 
     @Test
     void resolveIpReturnsStaticIpWithoutApi() throws Exception {
-        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, "10.9.9.9", JavaDistribution.NONE, 21);
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, "10.9.9.9", JavaDistribution.NONE, 21, "", "");
         assertEquals("10.9.9.9", launcher.resolveIp(agent("a-static", 360), nullLog()));
         verify(0, anyRequestedFor(anyUrl())); // static IP path makes no API call
     }
@@ -187,6 +187,34 @@ class ProxmoxLauncherSshTest {
                         + "{\"name\":\"eth0\",\"ip-addresses\":[{\"ip-address-type\":\"ipv4\",\"ip-address\":\"10.0.0.50\"}]}"
                         + "]}}")));
         assertEquals("10.0.0.50", launcher(JavaDistribution.NONE).resolveIp(agent("a-guest", 361), nullLog()));
+    }
+
+    @Test
+    void resolveIpSkipsLinkLocalAndPicksRoutable() throws Exception {
+        registerCloudAtWireMock();
+        // The interface reports an APIPA 169.254 address before the routable DHCP lease; the
+        // routable address must win even though the link-local one is listed first.
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/364/agent/network-get-interfaces"))
+                .willReturn(okJson("{\"data\":{\"result\":["
+                        + "{\"name\":\"eth0\",\"ip-addresses\":["
+                        + "{\"ip-address-type\":\"ipv4\",\"ip-address\":\"169.254.182.26\"},"
+                        + "{\"ip-address-type\":\"ipv4\",\"ip-address\":\"10.13.1.106\"}"
+                        + "]}]}}")));
+        assertEquals("10.13.1.106", launcher(JavaDistribution.NONE).resolveIp(agent("a-apipa", 364), nullLog()));
+    }
+
+    @Test
+    void resolveIpSkipsLinkLocalOnlyAndTimesOut() throws Exception {
+        registerCloudAtWireMock();
+        // Only an APIPA address is reported (DHCP not yet complete): resolveIp must NOT return it,
+        // so with only a link-local IP available it keeps polling and eventually times out.
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/365/agent/network-get-interfaces"))
+                .willReturn(okJson("{\"data\":{\"result\":["
+                        + "{\"name\":\"eth0\",\"ip-addresses\":["
+                        + "{\"ip-address-type\":\"ipv4\",\"ip-address\":\"169.254.10.5\"}"
+                        + "]}]}}")));
+        assertThrows(ProxmoxException.class,
+                () -> launcher(JavaDistribution.NONE).resolveIp(agent("a-apipa-only", 365), nullLog()));
     }
 
     @Test
@@ -229,7 +257,7 @@ class ProxmoxLauncherSshTest {
     void waitForSshReadyRetriesOnConnectionReset() throws Exception {
         registerPasswordCredential();
         // Needs budget > 2 s so the sleep between retries doesn't exhaust the deadline.
-        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 10, null, JavaDistribution.NONE, 21);
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 10, null, JavaDistribution.NONE, 21, "", "");
         java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
         launcher.setSshConnectionFactory((host, port) -> {
             if (calls.getAndIncrement() == 0) {
@@ -258,7 +286,7 @@ class ProxmoxLauncherSshTest {
 
     @Test
     void waitForSshReadyThrowsWhenCredentialMissing() {
-        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null, JavaDistribution.NONE, 21);
+        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null, JavaDistribution.NONE, 21, "", "");
         assertThrows(java.io.IOException.class, () -> launcher.waitForSshReady("1.2.3.4", nullLog()));
     }
 

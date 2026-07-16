@@ -649,11 +649,29 @@ class ProxmoxConfigLoaderTest {
         config.put("numExecutors", 1);
         config.put("osType", "WINDOWS");
         config.put("remoteFs", "C:\\Users\\jenkins\\agent");
+        config.put("windowsLoginShell", "POWERSHELL");
 
         ProxmoxTemplate template = loader.createProxmoxTemplate(config);
 
         assertEquals(OsType.WINDOWS, template.getOsType());
         assertEquals("C:\\Users\\jenkins\\agent", template.getRemoteFs());
+        assertEquals(WindowsLoginShell.POWERSHELL, template.getWindowsLoginShell());
+    }
+
+    @Test
+    void createProxmoxTemplate_windowsLoginShellDefaultsToCmdWhenAbsent() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "win-builder");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9001);
+        config.put("labelString", "windows");
+        config.put("numExecutors", 1);
+        config.put("osType", "WINDOWS");
+        config.put("remoteFs", "C:\\Users\\jenkins\\agent");
+
+        ProxmoxTemplate template = loader.createProxmoxTemplate(config);
+
+        assertEquals(WindowsLoginShell.CMD, template.getWindowsLoginShell());
     }
 
     @Test
