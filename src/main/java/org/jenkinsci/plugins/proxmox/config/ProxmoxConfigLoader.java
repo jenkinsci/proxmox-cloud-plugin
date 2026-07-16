@@ -295,6 +295,10 @@ public class ProxmoxConfigLoader {
             template.setOsType(parseEnum(OsType.class,
                     getStr(configMap, "osType", null), "osType"));
         }
+        if (configMap.containsKey("windowsLoginShell")) {
+            template.setWindowsLoginShell(parseEnum(WindowsLoginShell.class,
+                    getStr(configMap, "windowsLoginShell", null), "windowsLoginShell"));
+        }
 
         switch (template.getTemplateSelectionMode()) {
             case STATIC_ID -> {

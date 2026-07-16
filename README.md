@@ -389,12 +389,28 @@ as the base for Remote FS Root in the Jenkins template config.
 | Template VM ID | ID of your Windows template VM |
 | SSH Credentials | Username `jenkins`, private key matching `authorized_keys` |
 | Remote FS Root | Required. Full path to the agent work directory, e.g. `C:\Users\jenkins.<ORIGINAL-HOSTNAME>\agent` |
+| Login Shell | The shell OpenSSH is set to use (`DefaultShell`). Default `Command Prompt (cmd.exe)`. See [Login shell](#login-shell) below. |
 | Java Path | `java` if on the system PATH, or the full path to `java.exe` |
 | Startup Wait (seconds) | 300 is recommended. Windows sysprep finalization takes longer than a Linux cloud-init boot. |
 
 Java auto-install is Linux-only (it uses apt over SSH), so the template must have Java
 preinstalled (step 9 above); the hidden Java Distribution field is fixed at None for Windows
 templates.
+
+### Login shell
+
+Jenkins starts the agent with `cd "<dir>" && java ...`. `&&` is valid in `cmd.exe` and in
+PowerShell 7+ (`pwsh`), but Windows PowerShell 5.x rejects it (`The token '&&' is not a valid
+statement separator in this version`) and the agent never starts. Set **Login Shell** to match
+the OpenSSH `DefaultShell` on your template:
+
+- **Command Prompt (cmd.exe)**: the default when no `DefaultShell` registry value is set. Runs as-is.
+- **Windows PowerShell 5.x**: wraps the command as `cmd /c '<command>'` so PowerShell passes it to
+  cmd as a literal string (where `&&` is valid) instead of trying to parse it. Select this if
+  `DefaultShell` points at `...\WindowsPowerShell\v1.0\powershell.exe`.
+- **PowerShell 7+ (pwsh)**: runs as-is, like Command Prompt.
+
+If you have not set a `DefaultShell`, leave this at Command Prompt.
 
 ### Startup behaviour
 

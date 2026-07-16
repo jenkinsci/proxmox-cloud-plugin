@@ -18,6 +18,12 @@ Behaviour.specify(".proxmox-os-type-toggle", "proxmox-os-type-toggle", 0, functi
             if (row) row.style.display = isWindows ? "none" : "";
         });
 
+        // Mirror image: show Windows-only fields (e.g. Login Shell) only when Windows is active.
+        block.querySelectorAll(".proxmox-windows-only").forEach(function(el) {
+            var row = el.closest(".jenkins-form-item");
+            if (row) row.style.display = isWindows ? "" : "none";
+        });
+
         // Also hide the entire Cloud-Init section (header + entries).
         // <f:section> renders as <section class="jenkins-section">.
         var sectionStart = block.querySelector(".proxmox-section-start");

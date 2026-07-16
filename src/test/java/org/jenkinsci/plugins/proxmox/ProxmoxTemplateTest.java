@@ -20,6 +20,7 @@ import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.OsType;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
 import org.jenkinsci.plugins.proxmox.config.TemplateSelectionMode;
+import org.jenkinsci.plugins.proxmox.config.WindowsLoginShell;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -169,6 +170,49 @@ class ProxmoxTemplateTest {
         assertEquals(JavaDistribution.OPENJDK, template.getJavaDistribution());
         template.setJavaDistribution(null);
         assertEquals(JavaDistribution.NONE, template.getJavaDistribution());
+    }
+
+    @Test
+    void windowsLoginShellDefaultsToCmd() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "win", 1);
+        assertEquals(WindowsLoginShell.CMD, template.getWindowsLoginShell());
+    }
+
+    @Test
+    void windowsLoginShellSetterDefaultsNullToCmd() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "win", 1);
+        template.setWindowsLoginShell(WindowsLoginShell.POWERSHELL);
+        assertEquals(WindowsLoginShell.POWERSHELL, template.getWindowsLoginShell());
+        template.setWindowsLoginShell(null);
+        assertEquals(WindowsLoginShell.CMD, template.getWindowsLoginShell());
+    }
+
+    @Test
+    void windowsLoginShellGetterDefaultsNullFromOldConfig() throws Exception {
+        // Configs persisted before this field existed deserialize it as null (XStream skips initializers).
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "win", 1);
+        java.lang.reflect.Field f = ProxmoxTemplate.class.getDeclaredField("windowsLoginShell");
+        f.setAccessible(true);
+        f.set(template, null);
+        assertEquals(WindowsLoginShell.CMD, template.getWindowsLoginShell());
+    }
+
+    @Test
+    void startCommandWrapperOnlyForWindowsPowershell() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "l", 1);
+        // Linux never wraps the start command, whatever the shell field holds.
+        template.setOsType(OsType.LINUX);
+        template.setWindowsLoginShell(WindowsLoginShell.POWERSHELL);
+        assertEquals("", template.resolveStartCommandPrefix());
+        assertEquals("", template.resolveStartCommandSuffix());
+        // Windows + PowerShell 5.x: wrap as cmd /c '<command>' so && is handled by cmd.
+        template.setOsType(OsType.WINDOWS);
+        assertEquals("cmd /c '", template.resolveStartCommandPrefix());
+        assertEquals("'", template.resolveStartCommandSuffix());
+        // Windows + cmd (or PowerShell 7): no wrapper needed.
+        template.setWindowsLoginShell(WindowsLoginShell.CMD);
+        assertEquals("", template.resolveStartCommandPrefix());
+        assertEquals("", template.resolveStartCommandSuffix());
     }
 
     @Test

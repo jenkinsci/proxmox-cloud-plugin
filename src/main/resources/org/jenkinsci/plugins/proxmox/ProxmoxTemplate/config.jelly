@@ -76,6 +76,11 @@
         <f:textbox clazz="proxmox-remoteFs" checkDependsOn="osType"/>
     </f:entry>
 
+    <f:entry title="Login Shell" field="windowsLoginShell">
+        <input type="hidden" class="proxmox-windows-only"/>
+        <f:enum>${it.displayName}</f:enum>
+    </f:entry>
+
     <f:entry title="SSH Credentials" field="credentialsId">
         <j:choose>
             <j:when test="${readOnlyMode}"><f:textbox/></j:when>
