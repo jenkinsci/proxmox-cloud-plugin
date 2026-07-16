@@ -152,6 +152,22 @@ public class ProxmoxCloud extends Cloud {
         }
     }
 
+    /**
+     * Whether a VM id is reserved by an in-flight provision (cloned or about to be cloned, but not
+     * yet a registered node). Lets orphan cleanup skip a VM that is mid-provision: between clone and
+     * start it is stopped and has no node, so it would otherwise look leaked and be destroyed out
+     * from under the provisioning thread. Reads under the provision lock, matching reserve/release.
+     */
+    boolean isVmIdReserved(int vmId) {
+        Set<Integer> reserved = reservedVmIds;
+        if (reserved == null) {
+            return false;
+        }
+        synchronized (getProvisionLock()) {
+            return reserved.contains(vmId);
+        }
+    }
+
     @Override
     public Collection<NodeProvisioner.PlannedNode> provision(CloudState state, int excessWorkload) {
         Label label = state.getLabel();

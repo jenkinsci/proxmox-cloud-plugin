@@ -243,7 +243,14 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
                 }
                 if (!description.contains(marker)) continue;
 
-                // Protect a freshly-cloned VM whose agent has not registered yet: skip a running VM
+                // Never destroy a VM that a provision is mid-flight on. Between clone and start the
+                // VM is stopped and has no node yet, so the running-grace below would not protect it
+                // and it would be reaped out from under the provisioning thread (qmstart then fails
+                // with "NNN.conf does not exist"). reserveVmId/releaseVmId bracket the whole clone
+                // -> configure -> start, so the id is reserved for exactly that window.
+                if (cloud.isVmIdReserved(vm.vmid())) continue;
+
+                // Protect a freshly-started VM whose agent has not registered yet: skip a running VM
                 // still within the grace period. A non-running orphan is destroyed regardless.
                 if ("running".equals(vm.status()) && vm.uptime() * 1000L < graceMs) continue;
 

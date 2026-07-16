@@ -315,6 +315,32 @@ class ProxmoxOrphanCleanupTest {
     }
 
     @Test
+    void cleanup_skipsStoppedOrphanVmReservedByInFlightProvision() throws Exception {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        // Reserve id 412, as reserveVmId() does at the very start of a provision (before the clone).
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid")).willReturn(okJson("{\"data\":\"412\"}")));
+        int reserved = cloud.reserveVmId();
+        assertEquals(412, reserved);
+        try {
+            // Mid-provision: VM 412 is cloned but not yet started (stopped) and has no node. The
+            // stopped-orphan rule would destroy it, but the in-flight reservation must protect it,
+            // otherwise cleanup reaps it out from under the provision (qmstart then 404s).
+            stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
+                    .willReturn(okJson("{\"data\":[" +
+                            "{\"vmid\":412,\"name\":\"provisioning\",\"status\":\"stopped\",\"uptime\":0,\"template\":0}" +
+                            "]}")));
+            stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/412/config"))
+                    .willReturn(okJson("{\"data\":{\"description\":\"jenkins-managed;cloud:test-cloud\"}}")));
+
+            new ProxmoxOrphanCleanup().cleanupCloud(cloud, j.jenkins);
+
+            verify(0, deleteRequestedFor(urlPathEqualTo("/api2/json/nodes/pve1/qemu/412")));
+        } finally {
+            cloud.releaseVmId(reserved);
+        }
+    }
+
+    @Test
     void cleanup_removesStaleNodeButSpareesReusedVm() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock();
         // A stale node points at VM 305, but that id has since been re-cloned for something else
