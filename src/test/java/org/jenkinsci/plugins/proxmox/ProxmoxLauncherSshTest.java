@@ -6,10 +6,12 @@ import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
 import com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import hudson.model.Node;
+import hudson.plugins.sshslaves.SSHLauncher;
 import hudson.util.Secret;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
+import org.jenkinsci.plugins.proxmox.config.WindowsLoginShell;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -52,7 +54,7 @@ class ProxmoxLauncherSshTest {
     }
 
     private static ProxmoxLauncher launcher(JavaDistribution dist) {
-        return new ProxmoxLauncher("ssh-cred", "java", "", 1, null, dist, 21, "", "");
+        return new ProxmoxLauncher("ssh-cred", "java", "", 1, null, dist, 21, null);
     }
 
     /** A fake SSH session that records nothing beyond the canned auth result and exit status. */
@@ -144,7 +146,7 @@ class ProxmoxLauncherSshTest {
 
     @Test
     void installJavaThrowsWhenCredentialMissing() {
-        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null, JavaDistribution.OPENJDK, 21, "", "");
+        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null, JavaDistribution.OPENJDK, 21, null);
         assertThrows(java.io.IOException.class, () -> launcher.installJava("1.2.3.4", nullLog()));
     }
 
@@ -173,7 +175,7 @@ class ProxmoxLauncherSshTest {
 
     @Test
     void resolveIpReturnsStaticIpWithoutApi() throws Exception {
-        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, "10.9.9.9", JavaDistribution.NONE, 21, "", "");
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, "10.9.9.9", JavaDistribution.NONE, 21, null);
         assertEquals("10.9.9.9", launcher.resolveIp(agent("a-static", 360), nullLog()));
         verify(0, anyRequestedFor(anyUrl())); // static IP path makes no API call
     }
@@ -257,7 +259,7 @@ class ProxmoxLauncherSshTest {
     void waitForSshReadyRetriesOnConnectionReset() throws Exception {
         registerPasswordCredential();
         // Needs budget > 2 s so the sleep between retries doesn't exhaust the deadline.
-        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 10, null, JavaDistribution.NONE, 21, "", "");
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 10, null, JavaDistribution.NONE, 21, null);
         java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
         launcher.setSshConnectionFactory((host, port) -> {
             if (calls.getAndIncrement() == 0) {
@@ -286,7 +288,7 @@ class ProxmoxLauncherSshTest {
 
     @Test
     void waitForSshReadyThrowsWhenCredentialMissing() {
-        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null, JavaDistribution.NONE, 21, "", "");
+        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null, JavaDistribution.NONE, 21, null);
         assertThrows(java.io.IOException.class, () -> launcher.waitForSshReady("1.2.3.4", nullLog()));
     }
 
@@ -349,5 +351,126 @@ class ProxmoxLauncherSshTest {
         long elapsed = System.currentTimeMillis() - start;
         assertTrue(elapsed < 8_000, "install must not hang on a stuck command (was " + elapsed + "ms)");
         assertTrue(closes.get() >= 1, "a timed-out command must force-close the connection");
+    }
+
+    // --- shell auto-detection (detectWindowsShell / resolveLoginShell) ---
+
+    private static ProxmoxLauncher launcherAuto() {
+        return new ProxmoxLauncher("ssh-cred", "java", "", 1, null, JavaDistribution.NONE, 21,
+                WindowsLoginShell.AUTO);
+    }
+
+    /** A fake whose probe exec returns canned stdout/stderr/exit; auth always succeeds. */
+    private static ProxmoxLauncher.SshConnectionFactory execFactory(String stdout, String stderr, int exit) {
+        return (host, port) -> new ProxmoxLauncher.SshConnection() {
+            @Override public boolean authenticateWithPublicKey(String u, char[] k) { return true; }
+            @Override public boolean authenticateWithPassword(String u, String p) { return true; }
+            @Override public ProxmoxLauncher.SshExecResult exec(String c, int t) {
+                return new ProxmoxLauncher.SshExecResult(stdout, stderr, exit);
+            }
+            @Override public void close() {}
+        };
+    }
+
+    @Test
+    void detectReturnsCmdWhenProbeTokenOnStdout() throws Exception {
+        // cmd.exe / PowerShell 7 run `echo probe && echo <token>`, so the token lands on stdout.
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcherAuto();
+        launcher.setSshConnectionFactory(execFactory("probe\n" + ProxmoxLauncher.SHELL_PROBE_TOKEN + "\n", "", 0));
+        assertEquals(WindowsLoginShell.CMD, launcher.detectWindowsShell("1.2.3.4", nullLog()));
+    }
+
+    @Test
+    void detectReturnsPowershellWhenTokenAbsent() throws Exception {
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcherAuto();
+        launcher.setSshConnectionFactory(execFactory("", "some error", 1));
+        assertEquals(WindowsLoginShell.POWERSHELL, launcher.detectWindowsShell("1.2.3.4", nullLog()));
+    }
+
+    @Test
+    void detectReturnsPowershellWhenTokenOnlyInStderr() throws Exception {
+        // The load-bearing case: PS 5.x fails to parse the line and echoes the source (with the
+        // token) to STDERR. Reading stdout only must keep this a POWERSHELL (wrap) decision.
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcherAuto();
+        launcher.setSshConnectionFactory(execFactory("",
+                "The token '&&' is not a valid statement separator... + echo " + ProxmoxLauncher.SHELL_PROBE_TOKEN, 1));
+        assertEquals(WindowsLoginShell.POWERSHELL, launcher.detectWindowsShell("1.2.3.4", nullLog()));
+    }
+
+    @Test
+    void detectFallsBackToCmdOnIoException() throws Exception {
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcherAuto();
+        launcher.setSshConnectionFactory((host, port) -> { throw new java.io.IOException("connect refused"); });
+        assertEquals(WindowsLoginShell.CMD, launcher.detectWindowsShell("1.2.3.4", nullLog()));
+    }
+
+    @Test
+    void detectFallsBackToCmdWhenCredentialMissing() throws Exception {
+        ProxmoxLauncher launcher = new ProxmoxLauncher("missing-cred", "java", "", 1, null,
+                JavaDistribution.NONE, 21, WindowsLoginShell.AUTO);
+        assertEquals(WindowsLoginShell.CMD, launcher.detectWindowsShell("1.2.3.4", nullLog()));
+    }
+
+    @Test
+    void detectBoundsAndForceClosesAHangingProbe() throws Exception {
+        // A stuck probe must not hang the launch: it is force-closed past the bound and falls back to CMD.
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcherAuto();
+        java.util.concurrent.atomic.AtomicInteger closes = new java.util.concurrent.atomic.AtomicInteger();
+        launcher.setSshConnectionFactory((host, port) -> new ProxmoxLauncher.SshConnection() {
+            @Override public boolean authenticateWithPublicKey(String u, char[] k) { return true; }
+            @Override public boolean authenticateWithPassword(String u, String p) { return true; }
+            @Override public ProxmoxLauncher.SshExecResult exec(String c, int t) throws InterruptedException {
+                Thread.sleep(10_000);
+                return new ProxmoxLauncher.SshExecResult("", "", 0);
+            }
+            @Override public void close() { closes.incrementAndGet(); }
+        });
+        long start = System.currentTimeMillis();
+        assertEquals(WindowsLoginShell.CMD, launcher.detectWindowsShell("1.2.3.4", nullLog()));
+        assertTrue(System.currentTimeMillis() - start < 8_000, "detection must not hang on a stuck probe");
+        assertTrue(closes.get() >= 1, "a timed-out probe must force-close the connection");
+    }
+
+    @Test
+    void resolveLoginShellNullDoesNotWrap() throws Exception {
+        // Linux agent (null shell): no probe, no wrapper.
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null,
+                JavaDistribution.NONE, 21, null);
+        launcher.resolveLoginShell("1.2.3.4", nullLog());
+        SSHLauncher d = new SSHLauncher("1.2.3.4", 22, "ssh-cred");
+        launcher.configureDelegate(d);
+        assertEquals("", d.getPrefixStartSlaveCmd());
+        assertEquals("", d.getSuffixStartSlaveCmd());
+    }
+
+    @Test
+    void resolveLoginShellExplicitSkipsProbe() throws Exception {
+        // An explicit shell must NOT probe (the factory would fail the test if opened) and must wrap.
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 1, null,
+                JavaDistribution.NONE, 21, WindowsLoginShell.POWERSHELL);
+        launcher.setSshConnectionFactory((host, port) -> { throw new AssertionError("explicit shell must not probe"); });
+        launcher.resolveLoginShell("1.2.3.4", nullLog());
+        SSHLauncher d = new SSHLauncher("1.2.3.4", 22, "ssh-cred");
+        launcher.configureDelegate(d);
+        assertEquals("cmd /c '", d.getPrefixStartSlaveCmd());
+        assertEquals("'", d.getSuffixStartSlaveCmd());
+    }
+
+    @Test
+    void resolveLoginShellAutoThenWrapsWhenPowershellDetected() throws Exception {
+        // Full AUTO path: probe detects PS 5.x (token only in stderr) -> configureDelegate wraps.
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcherAuto();
+        launcher.setSshConnectionFactory(execFactory("", "parse error + echo " + ProxmoxLauncher.SHELL_PROBE_TOKEN, 1));
+        launcher.resolveLoginShell("1.2.3.4", nullLog());
+        SSHLauncher d = new SSHLauncher("1.2.3.4", 22, "ssh-cred");
+        launcher.configureDelegate(d);
+        assertEquals("cmd /c '", d.getPrefixStartSlaveCmd());
+        assertEquals("'", d.getSuffixStartSlaveCmd());
     }
 }
