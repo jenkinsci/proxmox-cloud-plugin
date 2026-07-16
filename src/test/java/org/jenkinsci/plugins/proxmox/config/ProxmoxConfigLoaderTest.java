@@ -659,7 +659,7 @@ class ProxmoxConfigLoaderTest {
     }
 
     @Test
-    void createProxmoxTemplate_windowsLoginShellDefaultsToCmdWhenAbsent() {
+    void createProxmoxTemplate_windowsLoginShellDefaultsToAutoWhenAbsent() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("name", "win-builder");
         config.put("node", "pve1");
@@ -671,7 +671,7 @@ class ProxmoxConfigLoaderTest {
 
         ProxmoxTemplate template = loader.createProxmoxTemplate(config);
 
-        assertEquals(WindowsLoginShell.CMD, template.getWindowsLoginShell());
+        assertEquals(WindowsLoginShell.AUTO, template.getWindowsLoginShell());
     }
 
     @Test

@@ -389,7 +389,7 @@ as the base for Remote FS Root in the Jenkins template config.
 | Template VM ID | ID of your Windows template VM |
 | SSH Credentials | Username `jenkins`, private key matching `authorized_keys` |
 | Remote FS Root | Required. Full path to the agent work directory, e.g. `C:\Users\jenkins.<ORIGINAL-HOSTNAME>\agent` |
-| Login Shell | The shell OpenSSH is set to use (`DefaultShell`). Default `Command Prompt (cmd.exe)`. See [Login shell](#login-shell) below. |
+| Login Shell | `Auto-detect (recommended)`. Detects the agent shell at launch; override only if needed. See [Login shell](#login-shell) below. |
 | Java Path | `java` if on the system PATH, or the full path to `java.exe` |
 | Startup Wait (seconds) | 300 is recommended. Windows sysprep finalization takes longer than a Linux cloud-init boot. |
 
@@ -401,16 +401,16 @@ templates.
 
 Jenkins starts the agent with `cd "<dir>" && java ...`. `&&` is valid in `cmd.exe` and in
 PowerShell 7+ (`pwsh`), but Windows PowerShell 5.x rejects it (`The token '&&' is not a valid
-statement separator in this version`) and the agent never starts. Set **Login Shell** to match
-the OpenSSH `DefaultShell` on your template:
+statement separator in this version`) and the agent never starts. **Login Shell** controls how the
+command is quoted:
 
-- **Command Prompt (cmd.exe)**: the default when no `DefaultShell` registry value is set. Runs as-is.
-- **Windows PowerShell 5.x**: wraps the command as `cmd /c '<command>'` so PowerShell passes it to
-  cmd as a literal string (where `&&` is valid) instead of trying to parse it. Select this if
-  `DefaultShell` points at `...\WindowsPowerShell\v1.0\powershell.exe`.
-- **PowerShell 7+ (pwsh)**: runs as-is, like Command Prompt.
-
-If you have not set a `DefaultShell`, leave this at Command Prompt.
+- **Auto-detect (recommended)**: the default. At launch the plugin runs a one-shot probe over SSH to
+  check whether the agent's shell accepts `&&`, and wraps the command only if it does not. This
+  handles cmd.exe, Windows PowerShell 5.x, and PowerShell 7 automatically, so you normally never
+  need to touch this field. The options below are manual overrides.
+- **Command Prompt (cmd.exe)**: no wrapping. The OpenSSH default when no `DefaultShell` is set.
+- **PowerShell**: wraps the command as `cmd /c '<command>'` so it is passed to cmd as a literal
+  string (where `&&` is valid). Needed for Windows PowerShell 5.x and also works for PowerShell 7.
 
 ### Startup behaviour
 

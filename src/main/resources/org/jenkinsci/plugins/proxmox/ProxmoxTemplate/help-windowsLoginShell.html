@@ -1,17 +1,17 @@
 <div>
-    The login shell OpenSSH is configured to use on the Windows agent (its <code>DefaultShell</code>
-    registry value). Jenkins starts the agent with a <code>cd "&lt;dir&gt;" &amp;&amp; java ...</code>
-    command, and this setting decides how that command is quoted for the shell.
+    How the agent-start command is quoted for the login shell OpenSSH uses on the Windows agent (its
+    <code>DefaultShell</code> registry value). Jenkins starts the agent with a
+    <code>cd "&lt;dir&gt;" &amp;&amp; java ...</code> command; <code>&amp;&amp;</code> is valid in
+    Command Prompt and PowerShell 7 but not in Windows PowerShell 5.x.
     <ul>
+        <li><b>Auto-detect (recommended)</b>: probes the agent's shell once at launch and wraps the
+            command only if the shell rejects <code>&amp;&amp;</code>. Leave this selected; the
+            options below are manual overrides.</li>
         <li><b>Command Prompt (cmd.exe)</b>: the OpenSSH default when no <code>DefaultShell</code> is
-            set. Runs the command as-is.</li>
-        <li><b>Windows PowerShell 5.x</b>: rejects <code>&amp;&amp;</code>
-            ("not a valid statement separator in this version"), so the command is wrapped as
-            <code>cmd /c '&lt;command&gt;'</code> and handed to <code>cmd.exe</code>. Select this if
-            your agent's <code>DefaultShell</code> points at
-            <code>...\WindowsPowerShell\v1.0\powershell.exe</code>.</li>
-        <li><b>PowerShell 7+ (pwsh)</b>: supports <code>&amp;&amp;</code> natively, so it is run as-is
-            like Command Prompt.</li>
+            set. Runs the command as-is (no wrapping).</li>
+        <li><b>PowerShell</b>: wraps the command as <code>cmd /c '&lt;command&gt;'</code> so it is
+            handed to <code>cmd.exe</code> as a literal string. Needed for Windows PowerShell 5.x
+            (which rejects <code>&amp;&amp;</code>) and also works for PowerShell 7.</li>
     </ul>
     Only applies to Windows agents.
 </div>

@@ -14,10 +14,10 @@ class WindowsLoginShellTest {
     }
 
     @Test
-    void powershellCoreNeedsNoWrapper() {
-        // pwsh 7+ supports && natively, so it runs SSHLauncher's command as-is like cmd.
-        assertEquals("", WindowsLoginShell.POWERSHELL_CORE.getStartCommandPrefix());
-        assertEquals("", WindowsLoginShell.POWERSHELL_CORE.getStartCommandSuffix());
+    void autoCarriesNoWrapperItself() {
+        // AUTO is resolved to CMD or POWERSHELL at launch; its own prefix/suffix are unused.
+        assertEquals("", WindowsLoginShell.AUTO.getStartCommandPrefix());
+        assertEquals("", WindowsLoginShell.AUTO.getStartCommandSuffix());
     }
 
     @Test

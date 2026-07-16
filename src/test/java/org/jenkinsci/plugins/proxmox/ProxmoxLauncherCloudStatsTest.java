@@ -35,7 +35,7 @@ class ProxmoxLauncherCloudStatsTest {
     }
 
     private static ProxmoxLauncher launcher() {
-        return new ProxmoxLauncher("ssh-cred", "java", "", 60, null, JavaDistribution.NONE, 21, "", "");
+        return new ProxmoxLauncher("ssh-cred", "java", "", 60, null, JavaDistribution.NONE, 21, null);
     }
 
     private static ProxmoxAgent agent(String name, int vmId, ProvisioningActivity.Id id) throws Exception {

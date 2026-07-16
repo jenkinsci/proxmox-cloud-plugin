@@ -19,6 +19,7 @@ import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
 import org.jenkinsci.plugins.proxmox.api.model.NetworkInterface;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
+import org.jenkinsci.plugins.proxmox.config.WindowsLoginShell;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,6 +57,15 @@ public class ProxmoxLauncher extends ComputerLauncher {
      */
     private static final long SSH_ATTEMPT_TIMEOUT_MS = 30_000;
 
+    /**
+     * Nonce echoed by the {@link WindowsLoginShell#AUTO} shell probe. The probe runs
+     * {@code echo probe && echo <token>}; if the agent's shell accepts {@code &&} the token appears
+     * on stdout. Kept to {@code [A-Za-z0-9_]} so no shell treats a character as special, and a
+     * package-private constant so tests can build deterministic probe output. See
+     * {@link #detectWindowsShell}.
+     */
+    static final String SHELL_PROBE_TOKEN = "PROXMOX_SHELL_PROBE_OK_9F3A2C";
+
     private final String sshCredentialsId;
     private final String javaPath;
     private final String jvmOptions;
@@ -63,11 +73,12 @@ public class ProxmoxLauncher extends ComputerLauncher {
     private final String staticIp;
     private final JavaDistribution javaDistribution;
     private final int javaMajorVersion;
-    // Wrap SSHLauncher's agent-start command (setPrefix/SuffixStartSlaveCmd). Used for Windows
-    // PowerShell 5.x agents, whose shell rejects the "&&" SSHLauncher hardcodes, by routing the
-    // command through cmd (prefix "cmd /c '", suffix "'"); blank for shells that need no wrapping.
-    private final String startCommandPrefix;
-    private final String startCommandSuffix;
+    // The agent's login shell, used to wrap SSHLauncher's "&&" start command for Windows PowerShell
+    // (via setPrefix/SuffixStartSlaveCmd). null for Linux (never wrapped). AUTO (the usual value) is
+    // resolved to CMD or POWERSHELL at launch by probing the agent; see resolveLoginShell.
+    private final WindowsLoginShell windowsLoginShell;
+    // The shell AUTO resolved to at launch; transient behaviour, not persisted config.
+    private transient WindowsLoginShell resolvedLoginShell;
 
     private transient SSHLauncher delegate;
     // Opens SSH sessions for the Java auto-install. Lazily defaulted to a trilead-backed factory;
@@ -78,7 +89,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
     public ProxmoxLauncher(String sshCredentialsId, String javaPath, String jvmOptions,
                             int startupWaitSeconds, String staticIp,
                             JavaDistribution javaDistribution, int javaMajorVersion,
-                            String startCommandPrefix, String startCommandSuffix) {
+                            WindowsLoginShell windowsLoginShell) {
         this.sshCredentialsId = sshCredentialsId;
         this.javaPath = javaPath != null && !javaPath.isBlank() ? javaPath : "java";
         this.jvmOptions = jvmOptions;
@@ -86,8 +97,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
         this.staticIp = staticIp;
         this.javaDistribution = javaDistribution != null ? javaDistribution : JavaDistribution.NONE;
         this.javaMajorVersion = javaMajorVersion;
-        this.startCommandPrefix = startCommandPrefix;
-        this.startCommandSuffix = startCommandSuffix;
+        this.windowsLoginShell = windowsLoginShell;
     }
 
     @Override
@@ -111,6 +121,8 @@ public class ProxmoxLauncher extends ComputerLauncher {
             if (javaDistribution != JavaDistribution.NONE) {
                 installJava(host, log);
             }
+
+            resolveLoginShell(host, log);
 
             delegate = new SSHLauncher(host, SSH_PORT, sshCredentialsId);
             configureDelegate(delegate);
@@ -181,11 +193,16 @@ public class ProxmoxLauncher extends ComputerLauncher {
         }
         // Windows PowerShell 5.x cannot parse the "&&" SSHLauncher builds into its start command;
         // wrapping it as cmd /c '<command>' (prefix + suffix) routes it through cmd for that shell.
-        if (startCommandPrefix != null && !startCommandPrefix.isBlank()) {
-            launcher.setPrefixStartSlaveCmd(startCommandPrefix);
-        }
-        if (startCommandSuffix != null && !startCommandSuffix.isBlank()) {
-            launcher.setSuffixStartSlaveCmd(startCommandSuffix);
+        // Prefer the shell resolved at launch (AUTO -> CMD/POWERSHELL); fall back to the constructor
+        // value so direct-call unit tests (no launch()) still see an explicit shell's wrapper.
+        WindowsLoginShell effective = resolvedLoginShell != null ? resolvedLoginShell : windowsLoginShell;
+        if (effective != null) {
+            if (!effective.getStartCommandPrefix().isBlank()) {
+                launcher.setPrefixStartSlaveCmd(effective.getStartCommandPrefix());
+            }
+            if (!effective.getStartCommandSuffix().isBlank()) {
+                launcher.setSuffixStartSlaveCmd(effective.getStartCommandSuffix());
+            }
         }
     }
 
@@ -246,6 +263,67 @@ public class ProxmoxLauncher extends ComputerLauncher {
     }
 
     /**
+     * Decide the effective login shell for this agent and store it in {@link #resolvedLoginShell}
+     * for {@link #configureDelegate}. Linux (a null shell) stays null (never wrapped); an explicit
+     * shell is used as chosen; {@link WindowsLoginShell#AUTO} probes the running agent via
+     * {@link #detectWindowsShell}. Package-private for unit testing.
+     */
+    void resolveLoginShell(String host, PrintStream log) throws InterruptedException {
+        if (windowsLoginShell == null || windowsLoginShell != WindowsLoginShell.AUTO) {
+            resolvedLoginShell = windowsLoginShell;
+            return;
+        }
+        resolvedLoginShell = detectWindowsShell(host, log);
+    }
+
+    /**
+     * Probe the agent's login shell and return the {@link WindowsLoginShell} whose wrapper makes
+     * SSHLauncher's {@code cd "..." && java ...} start command run there. Runs
+     * {@code echo probe && echo <token>} and checks STDOUT ONLY for the token: a shell that accepts
+     * {@code &&} (cmd.exe or PowerShell 7) echoes it, so no wrapper is needed ({@code CMD}); Windows
+     * PowerShell 5.x fails to parse the line, so the token never reaches stdout (the parse error,
+     * which echoes the source line and thus the token, goes to stderr), so the command is wrapped via
+     * cmd ({@code POWERSHELL}). Reading stdout only is what keeps the stderr source-echo from
+     * false-positiving. Never fails the launch: on missing credentials or any {@link IOException} it
+     * logs a warning and assumes {@code CMD} (no wrapper), leaving the manual Login Shell override as
+     * the escape hatch. Package-private for unit testing.
+     */
+    WindowsLoginShell detectWindowsShell(String host, PrintStream log) throws InterruptedException {
+        log.println("[Proxmox] Auto-detecting agent login shell...");
+        StandardUsernameCredentials creds = CredentialsMatchers.firstOrNull(
+                CredentialsProvider.lookupCredentialsInItemGroup(
+                        StandardUsernameCredentials.class, Jenkins.get(), null, Collections.emptyList()),
+                CredentialsMatchers.withId(sshCredentialsId));
+        if (creds == null) {
+            log.println("[Proxmox] SSH credentials not found for shell detection; assuming Command Prompt");
+            return WindowsLoginShell.CMD;
+        }
+
+        long timeoutMs = attemptTimeoutMs();
+        ExecutorService exec = newSshExecutor(host);
+        try (SshConnection conn = connectAndAuth(host, creds, exec, timeoutMs)) {
+            SshExecResult result = runBounded(conn, "echo probe && echo " + SHELL_PROBE_TOKEN,
+                    exec, timeoutMs, "Shell detection");
+            boolean acceptsAndAnd = result.stdout() != null && result.stdout().contains(SHELL_PROBE_TOKEN);
+            if (acceptsAndAnd) {
+                log.println("[Proxmox] Login shell accepts '&&' (Command Prompt or PowerShell 7);"
+                        + " no command wrapping");
+                return WindowsLoginShell.CMD;
+            }
+            log.println("[Proxmox] Login shell rejects '&&' (Windows PowerShell 5.x);"
+                    + " wrapping start command via cmd");
+            return WindowsLoginShell.POWERSHELL;
+        } catch (IOException e) {
+            log.println("[Proxmox] Shell detection failed (" + e.getMessage() + "); assuming Command"
+                    + " Prompt. Set Login Shell manually if the agent fails to start.");
+            LOGGER.log(Level.FINE, "Shell detection failed on " + host, e);
+            return WindowsLoginShell.CMD;
+        } finally {
+            exec.shutdownNow();
+        }
+    }
+
+    /**
      * Run one remote command, bounded by {@code timeoutMs}. The command executes on a worker thread
      * ({@code exec}) so a stalled channel read cannot hang the launch; on timeout the connection is
      * force-closed (which unblocks the trilead worker) and the command is treated as failed.
@@ -253,17 +331,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
     private String execRemoteCommand(SshConnection conn, String command, PrintStream log,
                                       String description, ExecutorService exec, long timeoutMs)
             throws IOException, InterruptedException {
-        Future<SshExecResult> future = exec.submit(() -> conn.exec(command, startupWaitSeconds));
-        SshExecResult result;
-        try {
-            result = future.get(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            future.cancel(true);
-            closeQuietly(conn);
-            throw new IOException(description + " timed out after " + timeoutMs + "ms");
-        } catch (ExecutionException e) {
-            throw unwrap(e, description + " failed");
-        }
+        SshExecResult result = runBounded(conn, command, exec, timeoutMs, description);
         Integer exitCode = result.exitStatus();
         if (exitCode == null || exitCode != 0) {
             log.println("[Proxmox] " + description + " output: " + result.stdout());
@@ -271,6 +339,27 @@ public class ProxmoxLauncher extends ComputerLauncher {
             throw new IOException(description + " failed with exit code " + exitCode);
         }
         return result.stdout() + result.stderr();
+    }
+
+    /**
+     * Run a remote command bounded by {@code timeoutMs} and return its raw result (does NOT throw on
+     * a non-zero exit status, unlike {@link #execRemoteCommand}, so callers that need to inspect the
+     * output of a command that may fail can do so). The command runs on a worker thread; on timeout
+     * the connection is force-closed to unblock the trilead worker.
+     */
+    private SshExecResult runBounded(SshConnection conn, String command, ExecutorService exec,
+                                     long timeoutMs, String description)
+            throws IOException, InterruptedException {
+        Future<SshExecResult> future = exec.submit(() -> conn.exec(command, startupWaitSeconds));
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            closeQuietly(conn);
+            throw new IOException(description + " timed out after " + timeoutMs + "ms");
+        } catch (ExecutionException e) {
+            throw unwrap(e, description + " failed");
+        }
     }
 
     private boolean authenticate(SshConnection conn, StandardUsernameCredentials creds) throws IOException {

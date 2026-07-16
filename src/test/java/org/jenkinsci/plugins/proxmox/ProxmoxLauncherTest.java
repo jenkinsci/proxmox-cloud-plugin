@@ -2,6 +2,7 @@ package org.jenkinsci.plugins.proxmox;
 
 import hudson.plugins.sshslaves.SSHLauncher;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
+import org.jenkinsci.plugins.proxmox.config.WindowsLoginShell;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -19,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ProxmoxLauncherTest {
 
     private static ProxmoxLauncher launcher(String javaPath, String jvmOptions, JavaDistribution dist) {
-        return new ProxmoxLauncher("ssh-cred", javaPath, jvmOptions, 60, null, dist, 21, "", "");
+        return new ProxmoxLauncher("ssh-cred", javaPath, jvmOptions, 60, null, dist, 21, null);
     }
 
     private static SSHLauncher delegate() {
@@ -77,18 +78,18 @@ class ProxmoxLauncherTest {
     }
 
     @Test
-    void startCommandPrefixAndSuffixForwardedWhenSet() {
-        // Windows PowerShell 5.x agents wrap the start command as cmd /c '<command>'.
+    void explicitPowershellWrapsStartCommand() {
+        // An explicit PowerShell shell (no launch/probe) wraps the start command as cmd /c '<command>'.
         SSHLauncher d = delegate();
-        new ProxmoxLauncher("ssh-cred", "java", "", 60, null, JavaDistribution.NONE, 21, "cmd /c '", "'")
-                .configureDelegate(d);
+        new ProxmoxLauncher("ssh-cred", "java", "", 60, null, JavaDistribution.NONE, 21,
+                WindowsLoginShell.POWERSHELL).configureDelegate(d);
         assertEquals("cmd /c '", d.getPrefixStartSlaveCmd());
         assertEquals("'", d.getSuffixStartSlaveCmd());
     }
 
     @Test
-    void blankStartCommandWrapperNotForwarded() {
-        // Linux agents and Windows cmd/PowerShell-7 agents pass no wrapper, leaving SSHLauncher's defaults.
+    void nullLoginShellDoesNotWrap() {
+        // Linux agents pass a null shell -> no wrapper, leaving SSHLauncher's defaults.
         SSHLauncher d = delegate();
         launcher("java", "", JavaDistribution.NONE).configureDelegate(d);
         assertEquals("", d.getPrefixStartSlaveCmd()); // fixNull default when unset

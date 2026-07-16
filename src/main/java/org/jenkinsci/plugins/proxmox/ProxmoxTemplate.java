@@ -77,7 +77,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     private String jvmOptions;
     private JavaDistribution javaDistribution = JavaDistribution.NONE;
     private int javaMajorVersion = JavaDistribution.RECOMMENDED_MIN_MAJOR_VERSION;
-    private WindowsLoginShell windowsLoginShell = WindowsLoginShell.CMD;
+    private WindowsLoginShell windowsLoginShell = WindowsLoginShell.AUTO;
     private int idleTerminationMinutes = 30;
     private int instanceCap;
     private int instanceMin;
@@ -155,10 +155,12 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         client.waitForTask(node, upid, cloud.getOperationTimeout());
 
         String staticIp = parseStaticIp(ipConfig);
+        // The login shell only matters for Windows (it wraps SSHLauncher's start command); Linux
+        // passes null so the launcher never wraps. AUTO is resolved by probing the agent at launch.
+        WindowsLoginShell loginShell = getOsType() == OsType.WINDOWS ? getWindowsLoginShell() : null;
         ProxmoxLauncher launcher = new ProxmoxLauncher(
                 credentialsId, javaPath, jvmOptions, startupWaitSeconds, staticIp,
-                javaDistribution, javaMajorVersion,
-                resolveStartCommandPrefix(), resolveStartCommandSuffix());
+                javaDistribution, javaMajorVersion, loginShell);
 
         // Use getRemoteFs() rather than the raw field: a blank Remote FS Root is stored as null
         // (see setRemoteFs), and an agent with a null remoteFS NPEs in
@@ -319,22 +321,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public JavaDistribution getJavaDistribution() { return javaDistribution; }
     // Null-defaulting for configs persisted before this field existed (XStream skips initializers).
     public WindowsLoginShell getWindowsLoginShell() {
-        return windowsLoginShell != null ? windowsLoginShell : WindowsLoginShell.CMD;
-    }
-
-    /**
-     * The SSHLauncher start-command prefix for this template. Only Windows agents wrap the command
-     * (per {@link WindowsLoginShell}); Linux agents never do, whatever the shell field holds.
-     */
-    // Package-private for unit testing.
-    String resolveStartCommandPrefix() {
-        return getOsType() == OsType.WINDOWS ? getWindowsLoginShell().getStartCommandPrefix() : "";
-    }
-
-    /** The SSHLauncher start-command suffix for this template (closes the Windows shell wrapper). */
-    // Package-private for unit testing.
-    String resolveStartCommandSuffix() {
-        return getOsType() == OsType.WINDOWS ? getWindowsLoginShell().getStartCommandSuffix() : "";
+        return windowsLoginShell != null ? windowsLoginShell : WindowsLoginShell.AUTO;
     }
     public int getJavaMajorVersion() { return javaMajorVersion; }
     public int getIdleTerminationMinutes() { return idleTerminationMinutes; }
@@ -391,7 +378,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     @DataBoundSetter public void setJavaPath(String v) { this.javaPath = v; }
     @DataBoundSetter public void setJvmOptions(String v) { this.jvmOptions = v; }
     @DataBoundSetter public void setWindowsLoginShell(WindowsLoginShell v) {
-        this.windowsLoginShell = v != null ? v : WindowsLoginShell.CMD;
+        this.windowsLoginShell = v != null ? v : WindowsLoginShell.AUTO;
     }
     @DataBoundSetter public void setJavaDistribution(JavaDistribution v) {
         this.javaDistribution = v != null ? v : JavaDistribution.NONE;
