@@ -331,26 +331,24 @@ class ProxmoxLauncherSshTest {
     }
 
     @Test
-    void installJavaBoundsAndForceClosesAHangingCommand() throws Exception {
-        // A command whose channel read never returns must not hang installJava: the exec is
-        // force-closed past its timeout and surfaces as an IOException. startupWaitSeconds=1.
+    void installJavaAllowsCommandsLongerThanConnectTimeout() throws Exception {
+        // Regression guard: the Java install command must get a generous timeout, NOT the 30s
+        // connect/auth cap (attemptTimeoutMs). With startupWaitSeconds=1 the connect/auth cap is 1s;
+        // an install command that runs ~1.5s (> that cap) must still succeed, because apt-get
+        // legitimately takes far longer than the connect timeout. (The bounded-exec force-close on a
+        // genuinely stuck command is covered by detectBoundsAndForceClosesAHangingProbe.)
         registerPasswordCredential();
-        ProxmoxLauncher launcher = launcher(JavaDistribution.OPENJDK);
-        java.util.concurrent.atomic.AtomicInteger closes = new java.util.concurrent.atomic.AtomicInteger();
+        ProxmoxLauncher launcher = launcher(JavaDistribution.OPENJDK); // startupWaitSeconds=1
         launcher.setSshConnectionFactory((host, port) -> new ProxmoxLauncher.SshConnection() {
             @Override public boolean authenticateWithPublicKey(String u, char[] k) { return true; }
             @Override public boolean authenticateWithPassword(String u, String p) { return true; }
             @Override public ProxmoxLauncher.SshExecResult exec(String c, int t) throws InterruptedException {
-                Thread.sleep(10_000); // stuck channel read
-                return new ProxmoxLauncher.SshExecResult("", "", 0);
+                Thread.sleep(1_500); // longer than the 1s connect/auth cap, well under the install budget
+                return new ProxmoxLauncher.SshExecResult("openjdk version \"21\"", "", 0);
             }
-            @Override public void close() { closes.incrementAndGet(); }
+            @Override public void close() {}
         });
-        long start = System.currentTimeMillis();
-        assertThrows(java.io.IOException.class, () -> launcher.installJava("1.2.3.4", nullLog()));
-        long elapsed = System.currentTimeMillis() - start;
-        assertTrue(elapsed < 8_000, "install must not hang on a stuck command (was " + elapsed + "ms)");
-        assertTrue(closes.get() >= 1, "a timed-out command must force-close the connection");
+        launcher.installJava("1.2.3.4", nullLog()); // must not throw: install uses the generous timeout
     }
 
     // --- shell auto-detection (detectWindowsShell / resolveLoginShell) ---

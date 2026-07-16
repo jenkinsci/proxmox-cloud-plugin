@@ -47,15 +47,26 @@ public class ProxmoxLauncher extends ComputerLauncher {
     private static final int SOCKET_TIMEOUT_MS = 3000;
 
     /**
-     * Hard per-attempt cap on a connect+authenticate, and on each Java-install command. trilead
+     * Hard per-attempt cap on a connect+authenticate and on the shell-detection probe. trilead
      * performs its post-key-exchange reads (the auth handshake, command output) with no socket
      * timeout, so a stalled sshd blocks the calling thread forever. The common trigger is a Windows
      * agent whose OpenSSH accepts the TCP connection and completes key exchange while still booting,
      * then goes silent before answering user-auth. Each attempt runs on a worker thread and its
      * connection is force-closed past this bound, so {@link #waitForSshReady}'s retry loop can make
      * progress and honour its own {@code startupWaitSeconds} deadline instead of hanging.
+     * NOTE: this is deliberately NOT used for the Java-install command, which legitimately runs for
+     * minutes ({@code apt-get} download + install); see {@link #JAVA_INSTALL_TIMEOUT_MS}.
      */
     private static final long SSH_ATTEMPT_TIMEOUT_MS = 30_000;
+
+    /**
+     * Bound on each Java auto-install command. An {@code apt-get} JDK install (index refresh +
+     * download + dpkg) routinely exceeds the 30s {@link #SSH_ATTEMPT_TIMEOUT_MS} connect/auth cap, so
+     * it gets its own generous timeout; the bound still exists so a genuinely stuck command (e.g.
+     * apt blocked on a dpkg lock) is force-closed rather than hanging the launch forever. A template
+     * with a larger {@code startupWaitSeconds} raises it further (see {@link #installJava}).
+     */
+    private static final long JAVA_INSTALL_TIMEOUT_MS = 5 * 60_000;
 
     /**
      * Nonce echoed by the {@link WindowsLoginShell#AUTO} shell probe. The probe runs
@@ -237,18 +248,22 @@ public class ProxmoxLauncher extends ComputerLauncher {
             throw new IOException("SSH credentials not found: " + sshCredentialsId);
         }
 
-        long timeoutMs = attemptTimeoutMs();
+        // Connect/auth is fast (bounded like every other attempt); the install COMMAND gets a
+        // generous timeout because apt-get legitimately runs for minutes. A larger startupWaitSeconds
+        // raises the install budget further for slow package mirrors.
+        long connectTimeoutMs = attemptTimeoutMs();
+        long installTimeoutMs = Math.max((long) startupWaitSeconds * 1000, JAVA_INSTALL_TIMEOUT_MS);
         ExecutorService exec = newSshExecutor(host);
-        try (SshConnection conn = connectAndAuth(host, creds, exec, timeoutMs)) {
+        try (SshConnection conn = connectAndAuth(host, creds, exec, connectTimeoutMs)) {
             String command = "which java >/dev/null 2>&1 && java -version 2>&1 || "
                     + "sudo bash -c '" + installCmd.replace("'", "'\\''") + "'";
-            execRemoteCommand(conn, command, log, "Java installation", exec, timeoutMs);
+            execRemoteCommand(conn, command, log, "Java installation", exec, installTimeoutMs);
 
             String verifyCmd = "java -version 2>&1"
                     + " || { JAVA_BIN=$(find /usr/lib/jvm -name java -path '*/bin/java' -type f 2>/dev/null | head -1);"
                     + " [ -n \"$JAVA_BIN\" ] && sudo ln -sf \"$JAVA_BIN\" /usr/local/bin/java"
                     + " && java -version 2>&1; }";
-            String output = execRemoteCommand(conn, verifyCmd, log, "Java verification", exec, timeoutMs);
+            String output = execRemoteCommand(conn, verifyCmd, log, "Java verification", exec, installTimeoutMs);
             // Log the full `java -version` banner (3 lines). Amazon Corretto reports "openjdk
             // version ..." on the first line like any OpenJDK build; its "Corretto-..." identity is
             // on the Runtime Environment / VM lines, so printing only the first line is misleading.
