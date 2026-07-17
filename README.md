@@ -416,8 +416,9 @@ command is quoted:
 
 Windows OpenSSH accepts TCP connections a few seconds before its auth subsystem is ready
 during first-boot sysprep finalization. The plugin handles this with an authentication retry
-loop after the port-open check; no configuration is needed, but keep Startup Wait high enough
-to cover the full boot time.
+loop after the port-open check: each attempt is time-bounded, so a host that is not yet ready
+fails fast and is retried rather than hanging the launch. No configuration is needed, but keep
+Startup Wait high enough to cover the full boot time.
 
 For YAML-managed Windows templates, see the notes in
 [Configuration as Code](#configuration-as-code).
