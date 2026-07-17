@@ -9,7 +9,3 @@ work/
 .project
 .settings/
 tmp/
-
-# Claude Code
-/.claude/settings.local.json
-/CLAUDE.md
