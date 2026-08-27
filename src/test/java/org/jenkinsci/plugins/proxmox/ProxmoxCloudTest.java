@@ -37,6 +37,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
@@ -172,6 +173,54 @@ class ProxmoxCloudTest {
         // Once the first id is released, it is free to be chosen again.
         cloud.releaseVmId(first);
         assertEquals(300, cloud.reserveVmId());
+    }
+
+    @Test
+    void selectCandidateUsesFewestAgentsAndDeterministicTieIndex() {
+        var pve1 = new ProxmoxTemplate.ProvisioningCandidate("pve1", 9000, "pve1");
+        var pve2 = new ProxmoxTemplate.ProvisioningCandidate("pve1", 9000, "pve2");
+
+        assertEquals(pve1, ProxmoxCloud.selectCandidate(
+                List.of(pve1, pve2), Map.of("pve1", 2, "pve2", 1), Map.of("pve2", 2), ignored -> 0));
+        assertEquals(pve2, ProxmoxCloud.selectCandidate(
+                List.of(pve1, pve2), Map.of("pve1", 1, "pve2", 1), Map.of(), ignored -> 1));
+    }
+
+    @Test
+    void selectCandidateRejectsNoCandidatesAndInvalidTieIndex() {
+        assertThrows(org.jenkinsci.plugins.proxmox.api.ProxmoxException.class,
+                () -> ProxmoxCloud.selectCandidate(List.of(), Map.of(), Map.of(), ignored -> 0));
+        var candidate = new ProxmoxTemplate.ProvisioningCandidate("pve1", 9000, "pve1");
+        assertThrows(IllegalArgumentException.class,
+                () -> ProxmoxCloud.selectCandidate(
+                        List.of(candidate), Map.of(), Map.of(), ignored -> 1));
+    }
+
+    @Test
+    void reserveProvisionSpreadsConcurrentInflightAgentsAcrossEmptyNodes() {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        cloud.setStartVmId(300);
+        ProxmoxTemplate template = new ProxmoxTemplate("test-template", "pve1", 9000, "linux", 1);
+        template.setTargetNodes(List.of("pve1", "pve2"));
+        stubFor(get(urlEqualTo("/api2/json/nodes")).willReturn(okJson("{\"data\":["
+                + "{\"node\":\"pve1\",\"status\":\"online\"},"
+                + "{\"node\":\"pve2\",\"status\":\"online\"}]}")));
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid")).willReturn(okJson("{\"data\":\"300\"}")));
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid?vmid=301"))
+                .willReturn(okJson("{\"data\":\"301\"}")));
+
+        ProxmoxCloud.ProvisioningReservation first =
+                cloud.reserveProvision(template, hudson.model.TaskListener.NULL);
+        ProxmoxCloud.ProvisioningReservation second =
+                cloud.reserveProvision(template, hudson.model.TaskListener.NULL);
+        try {
+            assertNotEquals(first.vmId(), second.vmId());
+            assertNotEquals(first.candidate().targetNode(), second.candidate().targetNode(),
+                    "the first in-flight reservation must count against its target");
+        } finally {
+            cloud.releaseProvision(second, template);
+            cloud.releaseProvision(first, template);
+        }
     }
 
     // --- cap accounting excludes offline-dead nodes (issues #16, #17) ---
@@ -327,6 +376,9 @@ class ProxmoxCloudTest {
                 "Copy Template button should render for an editable cloud");
         assertTrue(html.contains("copy-template"),
                 "copy-template adjunct should be loaded for an editable cloud");
+        assertTrue(html.contains("Template Location"));
+        assertTrue(html.contains("Agent Nodes"));
+        assertTrue(html.contains("agent-nodes"));
     }
 
     @Test

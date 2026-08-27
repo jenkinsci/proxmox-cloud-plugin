@@ -8,6 +8,7 @@ import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Label;
 import hudson.model.Node;
+import hudson.model.TaskListener;
 import hudson.slaves.Cloud;
 import hudson.slaves.NodeProvisioner;
 import hudson.util.FormValidation;
@@ -35,10 +36,14 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.IntUnaryOperator;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.kohsuke.stapler.HttpRedirect;
@@ -70,6 +75,13 @@ public class ProxmoxCloud extends Cloud {
     private transient volatile ProxmoxClient client;
     private transient volatile Object provisionLock;
     private transient volatile Set<Integer> reservedVmIds;
+    private transient volatile Map<PlacementKey, Integer> inFlightPlacements;
+
+    private record PlacementKey(String templateName, String targetNode) {
+    }
+
+    record ProvisioningReservation(int vmId, ProxmoxTemplate.ProvisioningCandidate candidate) {
+    }
 
     private static final DateTimeFormatter SYNC_TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -120,6 +132,20 @@ public class ProxmoxCloud extends Cloud {
         return reserved;
     }
 
+    private Map<PlacementKey, Integer> getInFlightPlacements() {
+        Map<PlacementKey, Integer> placements = inFlightPlacements;
+        if (placements == null) {
+            synchronized (this) {
+                placements = inFlightPlacements;
+                if (placements == null) {
+                    placements = new HashMap<>();
+                    inFlightPlacements = placements;
+                }
+            }
+        }
+        return placements;
+    }
+
     /**
      * Atomically reserve a free VM id for an imminent clone. {@link #getProvisionLock()} is held only
      * for the (fast) id lookup, not the clone/start, so concurrent provisions pick distinct ids yet
@@ -130,16 +156,83 @@ public class ProxmoxCloud extends Cloud {
     int reserveVmId() {
         ProxmoxClient apiClient = getClient();
         synchronized (getProvisionLock()) {
-            Set<Integer> reserved = getReservedVmIds();
-            int floor = startVmId;
-            for (int attempt = 0; attempt < 1000; attempt++) {
-                int id = apiClient.getNextVmId(floor);
-                if (reserved.add(id)) {
-                    return id;
-                }
-                floor = id + 1; // already reserved in-flight; search above it
+            return reserveVmIdLocked(apiClient);
+        }
+    }
+
+    private int reserveVmIdLocked(ProxmoxClient apiClient) {
+        Set<Integer> reserved = getReservedVmIds();
+        int floor = startVmId;
+        for (int attempt = 0; attempt < 1000; attempt++) {
+            int id = apiClient.getNextVmId(floor);
+            if (reserved.add(id)) {
+                return id;
             }
-            throw new ProxmoxException("Could not reserve a free VM id starting at " + startVmId);
+            floor = id + 1;
+        }
+        throw new ProxmoxException("Could not reserve a free VM id starting at " + startVmId);
+    }
+
+    ProvisioningReservation reserveProvision(ProxmoxTemplate template, TaskListener listener) {
+        List<ProxmoxTemplate.ProvisioningCandidate> candidates =
+                template.resolveProvisioningCandidates(getClient(), listener.getLogger());
+        synchronized (getProvisionLock()) {
+            int vmId = reserveVmIdLocked(getClient());
+            try {
+                Map<String, Integer> active = template.getActiveAgentCountsByNode(this);
+                Map<String, Integer> inFlight = new HashMap<>();
+                for (ProxmoxTemplate.ProvisioningCandidate candidate : candidates) {
+                    PlacementKey key = new PlacementKey(template.getName(), candidate.targetNode());
+                    inFlight.put(candidate.targetNode(), getInFlightPlacements().getOrDefault(key, 0));
+                }
+                ProxmoxTemplate.ProvisioningCandidate selected = selectCandidate(
+                        candidates, active, inFlight,
+                        bound -> ThreadLocalRandom.current().nextInt(bound));
+                PlacementKey key = new PlacementKey(template.getName(), selected.targetNode());
+                getInFlightPlacements().merge(key, 1, Integer::sum);
+                return new ProvisioningReservation(vmId, selected);
+            } catch (RuntimeException e) {
+                getReservedVmIds().remove(vmId);
+                throw e;
+            }
+        }
+    }
+
+    static ProxmoxTemplate.ProvisioningCandidate selectCandidate(
+            List<ProxmoxTemplate.ProvisioningCandidate> candidates,
+            Map<String, Integer> active,
+            Map<String, Integer> inFlight,
+            IntUnaryOperator randomIndex) {
+        if (candidates == null || candidates.isEmpty()) {
+            throw new ProxmoxException("No eligible Agent Node is available");
+        }
+        int minimum = candidates.stream()
+                .mapToInt(candidate -> active.getOrDefault(candidate.targetNode(), 0)
+                        + inFlight.getOrDefault(candidate.targetNode(), 0))
+                .min()
+                .orElseThrow();
+        List<ProxmoxTemplate.ProvisioningCandidate> tied = candidates.stream()
+                .filter(candidate -> active.getOrDefault(candidate.targetNode(), 0)
+                        + inFlight.getOrDefault(candidate.targetNode(), 0) == minimum)
+                .toList();
+        int index = randomIndex.applyAsInt(tied.size());
+        if (index < 0 || index >= tied.size()) {
+            throw new IllegalArgumentException("Random tie index is outside the candidate range");
+        }
+        return tied.get(index);
+    }
+
+    void releaseProvision(ProvisioningReservation reservation, ProxmoxTemplate template) {
+        synchronized (getProvisionLock()) {
+            getReservedVmIds().remove(reservation.vmId());
+            PlacementKey key = new PlacementKey(template.getName(), reservation.candidate().targetNode());
+            Map<PlacementKey, Integer> placements = getInFlightPlacements();
+            int remaining = placements.getOrDefault(key, 0) - 1;
+            if (remaining <= 0) {
+                placements.remove(key);
+            } else {
+                placements.put(key, remaining);
+            }
         }
     }
 
@@ -197,11 +290,12 @@ public class ProxmoxCloud extends Cloud {
                 // Each clone reserves its own id under a short lock, then clones/starts outside it, so
                 // multiple agents come up concurrently up to the cap rather than strictly serially.
                 Future<Node> future = Computer.threadPoolForRemoting.submit(() -> {
-                    int vmId = reserveVmId();
+                    ProvisioningReservation reservation = reserveProvision(t, TaskListener.NULL);
                     try {
-                        return t.provision(this, hudson.model.TaskListener.NULL, vmId, activityId);
+                        return t.provision(this, TaskListener.NULL, reservation.vmId(), activityId,
+                                reservation.candidate());
                     } finally {
-                        releaseVmId(vmId);
+                        releaseProvision(reservation, t);
                     }
                 });
                 planned.add(new TrackedPlannedNode(activityId, template.getNumExecutors(), future));
@@ -243,11 +337,12 @@ public class ProxmoxCloud extends Cloud {
             CloudStatistics.ProvisioningListener.get().onStarted(activityId);
             activityIds.add(activityId);
             futures.add(Computer.threadPoolForRemoting.submit(() -> {
-                int vmId = reserveVmId();
+                ProvisioningReservation reservation = reserveProvision(template, TaskListener.NULL);
                 try {
-                    return template.provision(this, hudson.model.TaskListener.NULL, vmId, activityId);
+                    return template.provision(this, TaskListener.NULL, reservation.vmId(), activityId,
+                            reservation.candidate());
                 } finally {
-                    releaseVmId(vmId);
+                    releaseProvision(reservation, template);
                 }
             }));
         }
@@ -332,11 +427,12 @@ public class ProxmoxCloud extends Cloud {
         CloudStatistics.ProvisioningListener.get().onStarted(activityId);
         try {
             ProxmoxAgent agent;
-            int vmId = reserveVmId();
+            ProvisioningReservation reservation = reserveProvision(t, TaskListener.NULL);
             try {
-                agent = t.provision(this, hudson.model.TaskListener.NULL, vmId, activityId);
+                agent = t.provision(this, TaskListener.NULL, reservation.vmId(), activityId,
+                        reservation.candidate());
             } finally {
-                releaseVmId(vmId);
+                releaseProvision(reservation, t);
             }
             // Rename the activity from the template name to the agent name (see provisionForMinimum).
             CloudStatistics.ProvisioningListener.get().onComplete(activityId, agent);

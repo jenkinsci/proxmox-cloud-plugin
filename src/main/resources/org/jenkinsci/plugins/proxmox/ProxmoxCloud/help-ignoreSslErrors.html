@@ -1,3 +1,5 @@
 <div>
-    Accept self-signed SSL certificates. Most Proxmox installations use self-signed certs by default.
+    Disable certificate-chain and hostname verification for this Proxmox connection. This permits
+    self-signed node certificates and cluster VIPs whose address is absent from the certificate, but
+    should be enabled only when the network path is trusted.
 </div>

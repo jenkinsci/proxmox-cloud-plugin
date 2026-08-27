@@ -1,0 +1,10 @@
+<div>
+    <b>One template on Template Node</b> preserves the existing behavior. Agents may run on another
+    selected node, but Proxmox requires both the source template disks and the clone's target
+    storage to be shared for that cross-node clone.
+</div>
+<div>
+    <b>Matching template on each Agent Node</b> supports clusters with local storage. Each selected
+    node must have its own template, with a distinct cluster-wide VM ID, matching the configured tag
+    or name regular expression. Jenkins resolves the newest local match before placement.
+</div>

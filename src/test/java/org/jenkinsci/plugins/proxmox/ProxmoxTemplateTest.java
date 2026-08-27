@@ -20,6 +20,7 @@ import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.OsType;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
 import org.jenkinsci.plugins.proxmox.config.TemplateSelectionMode;
+import org.jenkinsci.plugins.proxmox.config.TemplateLocation;
 import org.jenkinsci.plugins.proxmox.config.WindowsLoginShell;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,8 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
 import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
+
+import java.util.List;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
@@ -89,6 +92,29 @@ class ProxmoxTemplateTest {
         assertEquals(0, template.getInstanceCap());
         assertEquals(0, template.getInstanceMin());
         assertEquals(0, template.getMaxTotalUses());
+        assertEquals(TemplateLocation.FIXED_NODE, template.getTemplateLocation());
+        assertEquals(List.of("pve1"), template.getTargetNodes());
+        assertNull(template.getRawTargetNodes());
+    }
+
+    @Test
+    void targetNodesNormalizeDeduplicateAndRemainImmutable() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "pve1", 100, "linux", 1);
+
+        template.setTargetNodes(List.of(" pve2 ", "pve1", "pve2", " "));
+
+        assertEquals(List.of("pve2", "pve1"), template.getTargetNodes());
+        assertEquals(List.of("pve2", "pve1"), template.getRawTargetNodes());
+        assertThrows(UnsupportedOperationException.class, () -> template.getTargetNodes().add("pve3"));
+    }
+
+    @Test
+    void localTemplateModeDoesNotFallBackToTemplateNode() {
+        ProxmoxTemplate template = new ProxmoxTemplate("test", "legacy-node", 100, "linux", 1);
+        template.setTemplateLocation(TemplateLocation.EACH_TARGET_NODE);
+
+        assertTrue(template.getTargetNodes().isEmpty());
+        assertNull(template.getRawTargetNodes());
     }
 
     @Test
@@ -258,8 +284,10 @@ class ProxmoxTemplateTest {
         try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
             assertEquals(0, d.doFillNodeItems("", "", false).size());
             assertEquals(0, d.doFillTemplateVmIdItems("node", "", "", false).size());
-            assertEquals(0, d.doFillTargetStorageItems("node", "", "", false).size());
-            assertEquals(0, d.doFillNetworkBridgeItems("node", "", "", false).size());
+            assertEquals(0, d.doFillTargetStorageItems(
+                    "node", null, "FIXED_NODE", "", "", "", false).size());
+            assertEquals(0, d.doFillNetworkBridgeItems(
+                    "node", null, "", "", "", false).size());
             assertEquals(0, d.doFillTargetPoolItems("", "", false).size());
         }
 
@@ -282,23 +310,27 @@ class ProxmoxTemplateTest {
         ProxmoxTemplate.DescriptorImpl d = j.jenkins.getDescriptorByType(ProxmoxTemplate.DescriptorImpl.class);
 
         try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
-            assertEquals(FormValidation.Kind.OK, d.doCheckNode("").kind);
+            assertEquals(FormValidation.Kind.OK, d.doCheckNode("", "FIXED_NODE").kind);
             assertEquals(FormValidation.Kind.OK, d.doCheckJavaMajorVersion("", "OPENJDK").kind);
             assertEquals(FormValidation.Kind.OK, d.doCheckRemoteFs("", OsType.WINDOWS.name()).kind);
             // The dynamic-selection checks query the Proxmox API; a reader gets a silent OK even
             // for input that would otherwise error.
-            assertEquals(FormValidation.Kind.OK, d.doCheckTemplateNameRegex("[unclosed", "pve1", "", "", false).kind);
-            assertEquals(FormValidation.Kind.OK, d.doCheckTemplateTag("", "pve1", "", "", false).kind);
-            assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(0, "STATIC_ID").kind);
+            assertEquals(FormValidation.Kind.OK,
+                    d.doCheckTemplateNameRegex("[unclosed", "pve1", "FIXED_NODE", null, "", "", false).kind);
+            assertEquals(FormValidation.Kind.OK,
+                    d.doCheckTemplateTag("", "pve1", "FIXED_NODE", null, "", "", false).kind);
+            assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(0, "STATIC_ID", "FIXED_NODE").kind);
             assertEquals(FormValidation.Kind.OK, d.doCheckInstanceMin(-1, 0).kind);
         }
         try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
-            assertEquals(FormValidation.Kind.ERROR, d.doCheckNode("").kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckNode("", "FIXED_NODE").kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckJavaMajorVersion("", "OPENJDK").kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckRemoteFs("", OsType.WINDOWS.name()).kind);
-            assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateNameRegex("[unclosed", "pve1", "", "", false).kind);
-            assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateTag("", "pve1", "", "", false).kind);
-            assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0, "STATIC_ID").kind);
+            assertEquals(FormValidation.Kind.ERROR,
+                    d.doCheckTemplateNameRegex("[unclosed", "pve1", "FIXED_NODE", null, "", "", false).kind);
+            assertEquals(FormValidation.Kind.ERROR,
+                    d.doCheckTemplateTag("", "pve1", "FIXED_NODE", null, "", "", false).kind);
+            assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0, "STATIC_ID", "FIXED_NODE").kind);
             assertEquals(FormValidation.Kind.ERROR, d.doCheckInstanceMin(-1, 0).kind);
         }
     }
@@ -384,9 +416,35 @@ class ProxmoxTemplateTest {
         String cred = registerCreds();
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/storage")).willReturn(okJson("{\"data\":["
                 + "{\"storage\":\"local-lvm\",\"type\":\"lvmthin\",\"avail\":123}]}")));
-        ListBoxModel m = descriptor().doFillTargetStorageItems("pve1", apiUrl(), cred, false);
+        ListBoxModel m = descriptor().doFillTargetStorageItems(
+                "pve1", null, "FIXED_NODE", "", apiUrl(), cred, false);
         assertEquals("(inherit from template)", m.get(0).name);
         assertTrue(m.stream().anyMatch(o -> o.value.equals("local-lvm") && o.name.contains("lvmthin")));
+    }
+
+    @Test
+    void doFillTargetStorageItemsListsOnlyPoolsCommonToAllTargets() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/storage")).willReturn(okJson("{\"data\":["
+                + "{\"storage\":\"shared\",\"type\":\"nfs\",\"avail\":123,\"shared\":1},"
+                + "{\"storage\":\"local-same\",\"type\":\"lvmthin\",\"avail\":123},"
+                + "{\"storage\":\"pve1-only\",\"type\":\"dir\",\"avail\":123}]}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve2/storage")).willReturn(okJson("{\"data\":["
+                + "{\"storage\":\"shared\",\"type\":\"nfs\",\"avail\":123,\"shared\":1},"
+                + "{\"storage\":\"local-same\",\"type\":\"lvmthin\",\"avail\":123},"
+                + "{\"storage\":\"pve2-only\",\"type\":\"dir\",\"avail\":123}]}")));
+
+        ListBoxModel model = descriptor().doFillTargetStorageItems(
+                "pve1", " pve1,pve2,pve1 ", "FIXED_NODE", "", apiUrl(), cred, false);
+
+        assertTrue(model.stream().anyMatch(option -> option.value.equals("shared")));
+        assertFalse(model.stream().anyMatch(option -> option.value.equals("local-same")));
+        assertFalse(model.stream().anyMatch(option -> option.value.equals("pve1-only")));
+        assertFalse(model.stream().anyMatch(option -> option.value.equals("pve2-only")));
+
+        ListBoxModel localModel = descriptor().doFillTargetStorageItems(
+                "", "pve1,pve2", "EACH_TARGET_NODE", "", apiUrl(), cred, false);
+        assertTrue(localModel.stream().anyMatch(option -> option.value.equals("local-same")));
     }
 
     @Test
@@ -395,9 +453,28 @@ class ProxmoxTemplateTest {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/network")).willReturn(okJson("{\"data\":["
                 + "{\"iface\":\"vmbr0\",\"type\":\"bridge\",\"active\":1},"
                 + "{\"iface\":\"eno1\",\"type\":\"eth\",\"active\":1}]}")));
-        ListBoxModel m = descriptor().doFillNetworkBridgeItems("pve1", apiUrl(), cred, false);
+        ListBoxModel m = descriptor().doFillNetworkBridgeItems(
+                "pve1", null, "", apiUrl(), cred, false);
         assertTrue(m.stream().anyMatch(o -> o.value.equals("vmbr0")));
         assertFalse(m.stream().anyMatch(o -> o.value.equals("eno1")));
+    }
+
+    @Test
+    void doFillNetworkBridgeItemsListsOnlyBridgesCommonToAllTargets() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/network")).willReturn(okJson("{\"data\":["
+                + "{\"iface\":\"vmbr0\",\"type\":\"bridge\",\"active\":1},"
+                + "{\"iface\":\"vmbr1\",\"type\":\"bridge\",\"active\":1}]}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve2/network")).willReturn(okJson("{\"data\":["
+                + "{\"iface\":\"vmbr0\",\"type\":\"bridge\",\"active\":1},"
+                + "{\"iface\":\"vmbr2\",\"type\":\"bridge\",\"active\":1}]}")));
+
+        ListBoxModel model = descriptor().doFillNetworkBridgeItems(
+                "pve1", "pve1,pve2", "", apiUrl(), cred, false);
+
+        assertTrue(model.stream().anyMatch(option -> option.value.equals("vmbr0")));
+        assertFalse(model.stream().anyMatch(option -> option.value.equals("vmbr1")));
+        assertFalse(model.stream().anyMatch(option -> option.value.equals("vmbr2")));
     }
 
     @Test
@@ -416,10 +493,13 @@ class ProxmoxTemplateTest {
     void doFillTargetStorageItemsToleratesApiError() {
         String cred = registerCreds();
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/storage")).willReturn(aResponse().withStatus(500)));
-        ListBoxModel m = descriptor().doFillTargetStorageItems("pve1", apiUrl(), cred, false);
-        // The API error is logged and swallowed; the inherit placeholder still renders.
-        assertEquals(1, m.size());
+        ListBoxModel m = descriptor().doFillTargetStorageItems(
+                "pve1", null, "FIXED_NODE", "saved-storage", apiUrl(), cred, false);
+        // The API error is logged and swallowed; the saved value is retained as unavailable.
+        assertEquals(2, m.size());
         assertEquals("(inherit from template)", m.get(0).name);
+        assertTrue(m.stream().anyMatch(option -> option.value.equals("saved-storage")
+                && option.name.contains("unavailable")));
     }
 
     @Test
@@ -436,15 +516,15 @@ class ProxmoxTemplateTest {
     @Test
     void doCheckTemplateVmIdRejectsNonPositiveInStaticMode() {
         ProxmoxTemplate.DescriptorImpl d = descriptor();
-        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0, "STATIC_ID").kind);
-        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(-5, "STATIC_ID").kind);
-        assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(9000, "STATIC_ID").kind);
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0, "STATIC_ID", "FIXED_NODE").kind);
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(-5, "STATIC_ID", "FIXED_NODE").kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(9000, "STATIC_ID", "FIXED_NODE").kind);
         // No mode parameter (pre-radioBlock form state) is treated as static.
-        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0, null).kind);
-        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0, "").kind);
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0, null, "FIXED_NODE").kind);
+        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateVmId(0, "", "FIXED_NODE").kind);
         // The hidden static select submits an empty value in dynamic modes; not an error then.
-        assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(0, "NAME_REGEX").kind);
-        assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(0, "TAG").kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(0, "NAME_REGEX", "FIXED_NODE").kind);
+        assertEquals(FormValidation.Kind.OK, d.doCheckTemplateVmId(0, "TAG", "FIXED_NODE").kind);
     }
 
     // --- dynamic template selection: match-count doChecks (WireMock) ---
@@ -464,7 +544,8 @@ class ProxmoxTemplateTest {
     void doCheckTemplateNameRegexReportsMatchCountAndWinner() {
         String cred = registerCreds();
         stubTemplateListWithCtimes();
-        FormValidation v = descriptor().doCheckTemplateNameRegex("agent-.*", "pve1", apiUrl(), cred, false);
+        FormValidation v = descriptor().doCheckTemplateNameRegex(
+                "agent-.*", "pve1", "FIXED_NODE", null, apiUrl(), cred, false);
         assertEquals(FormValidation.Kind.OK, v.kind);
         assertTrue(v.getMessage().contains("Matches 2 templates"), v.getMessage());
         assertTrue(v.getMessage().contains("9001"), v.getMessage());
@@ -474,7 +555,8 @@ class ProxmoxTemplateTest {
     void doCheckTemplateNameRegexWarnsOnZeroMatches() {
         String cred = registerCreds();
         stubTemplateListWithCtimes();
-        FormValidation v = descriptor().doCheckTemplateNameRegex("nothing-.*", "pve1", apiUrl(), cred, false);
+        FormValidation v = descriptor().doCheckTemplateNameRegex(
+                "nothing-.*", "pve1", "FIXED_NODE", null, apiUrl(), cred, false);
         assertEquals(FormValidation.Kind.WARNING, v.kind);
         assertTrue(v.getMessage().contains("Matches 0 templates"), v.getMessage());
     }
@@ -482,18 +564,22 @@ class ProxmoxTemplateTest {
     @Test
     void doCheckTemplateNameRegexRejectsBlankAndInvalidPattern() {
         ProxmoxTemplate.DescriptorImpl d = descriptor();
-        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateNameRegex("", "pve1", apiUrl(), "", false).kind);
-        assertEquals(FormValidation.Kind.ERROR, d.doCheckTemplateNameRegex(null, "pve1", apiUrl(), "", false).kind);
         assertEquals(FormValidation.Kind.ERROR,
-                d.doCheckTemplateNameRegex("[unclosed", "pve1", apiUrl(), "", false).kind);
+                d.doCheckTemplateNameRegex("", "pve1", "FIXED_NODE", null, apiUrl(), "", false).kind);
+        assertEquals(FormValidation.Kind.ERROR,
+                d.doCheckTemplateNameRegex(null, "pve1", "FIXED_NODE", null, apiUrl(), "", false).kind);
+        assertEquals(FormValidation.Kind.ERROR,
+                d.doCheckTemplateNameRegex("[unclosed", "pve1", "FIXED_NODE", null, apiUrl(), "", false).kind);
     }
 
     @Test
     void doCheckTemplateNameRegexSilentWithoutNodeOrConnection() {
         // No node chosen yet, or no API connection: nothing useful to count, stay quiet.
         ProxmoxTemplate.DescriptorImpl d = descriptor();
-        assertEquals(FormValidation.Kind.OK, d.doCheckTemplateNameRegex("agent-.*", "", apiUrl(), "", false).kind);
-        assertEquals(FormValidation.Kind.OK, d.doCheckTemplateNameRegex("agent-.*", "pve1", "", "", false).kind);
+        assertEquals(FormValidation.Kind.OK,
+                d.doCheckTemplateNameRegex("agent-.*", "", "FIXED_NODE", null, apiUrl(), "", false).kind);
+        assertEquals(FormValidation.Kind.OK,
+                d.doCheckTemplateNameRegex("agent-.*", "pve1", "FIXED_NODE", null, "", "", false).kind);
     }
 
     @Test
@@ -501,7 +587,8 @@ class ProxmoxTemplateTest {
         String cred = registerCreds();
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
                 .willReturn(aResponse().withStatus(500).withBody("boom")));
-        FormValidation v = descriptor().doCheckTemplateNameRegex("agent-.*", "pve1", apiUrl(), cred, false);
+        FormValidation v = descriptor().doCheckTemplateNameRegex(
+                "agent-.*", "pve1", "FIXED_NODE", null, apiUrl(), cred, false);
         assertEquals(FormValidation.Kind.WARNING, v.kind);
         assertTrue(v.getMessage().contains("Could not query Proxmox"), v.getMessage());
     }
@@ -510,12 +597,14 @@ class ProxmoxTemplateTest {
     void doCheckTemplateTagReportsMatchCountAndWinner() {
         String cred = registerCreds();
         stubTemplateListWithCtimes();
-        FormValidation v = descriptor().doCheckTemplateTag("jenkins", "pve1", apiUrl(), cred, false);
+        FormValidation v = descriptor().doCheckTemplateTag(
+                "jenkins", "pve1", "FIXED_NODE", null, apiUrl(), cred, false);
         assertEquals(FormValidation.Kind.OK, v.kind);
         assertTrue(v.getMessage().contains("Matches 2 templates"), v.getMessage());
         assertTrue(v.getMessage().contains("9001"), v.getMessage());
 
-        FormValidation single = descriptor().doCheckTemplateTag("prod", "pve1", apiUrl(), cred, false);
+        FormValidation single = descriptor().doCheckTemplateTag(
+                "prod", "pve1", "FIXED_NODE", null, apiUrl(), cred, false);
         assertEquals(FormValidation.Kind.OK, single.kind);
         assertTrue(single.getMessage().contains("Matches 1 template;"), single.getMessage());
     }
@@ -525,9 +614,36 @@ class ProxmoxTemplateTest {
         String cred = registerCreds();
         stubTemplateListWithCtimes();
         assertEquals(FormValidation.Kind.WARNING,
-                descriptor().doCheckTemplateTag("missing", "pve1", apiUrl(), cred, false).kind);
+                descriptor().doCheckTemplateTag(
+                        "missing", "pve1", "FIXED_NODE", null, apiUrl(), cred, false).kind);
         assertEquals(FormValidation.Kind.ERROR,
-                descriptor().doCheckTemplateTag("", "pve1", apiUrl(), cred, false).kind);
+                descriptor().doCheckTemplateTag(
+                        "", "pve1", "FIXED_NODE", null, apiUrl(), cred, false).kind);
+    }
+
+    @Test
+    void doCheckLocalTemplateTagReportsPerNodeCoverage() {
+        String cred = registerCreds();
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu")).willReturn(okJson("{\"data\":["
+                + "{\"vmid\":9100,\"name\":\"local-1\",\"template\":1,\"tags\":\"jenkins\"}]}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve2/qemu")).willReturn(okJson("{\"data\":[]}")));
+
+        FormValidation validation = descriptor().doCheckTemplateTag(
+                "jenkins", "", "EACH_TARGET_NODE", "pve1,pve2",
+                apiUrl(), cred, false);
+
+        assertEquals(FormValidation.Kind.WARNING, validation.kind);
+        assertTrue(validation.getMessage().contains("1/2"), validation.getMessage());
+        assertTrue(validation.getMessage().contains("pve2"), validation.getMessage());
+    }
+
+    @Test
+    void fixedOnlyChecksAreIgnoredForLocalTemplateMode() {
+        ProxmoxTemplate.DescriptorImpl descriptor = descriptor();
+        assertEquals(FormValidation.Kind.OK,
+                descriptor.doCheckNode("", "EACH_TARGET_NODE").kind);
+        assertEquals(FormValidation.Kind.OK,
+                descriptor.doCheckTemplateVmId(0, "STATIC_ID", "EACH_TARGET_NODE").kind);
     }
 
     // --- provision(): clone/configure/start via WireMock, plus the config helpers ---
@@ -562,6 +678,29 @@ class ProxmoxTemplateTest {
         assertEquals("pve1", agent.getProxmoxNode());
         verify(postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/clone")));
         verify(postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/300/status/start")));
+    }
+
+    @Test
+    void provisionCrossNodeClonesFromSourceAndOperatesOnTarget() throws Exception {
+        ProxmoxCloud cloud = cloudAtWireMock(registerCreds());
+        ProxmoxTemplate template = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        template.setTargetNodes(List.of("pve2"));
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/clone"))
+                .willReturn(okJson("{\"data\":\"UPID:clone\"}")));
+        stubFor(get(urlPathMatching("/api2/json/nodes/pve1/tasks/.*/status"))
+                .willReturn(okJson("{\"data\":{\"status\":\"stopped\",\"exitstatus\":\"OK\"}}")));
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve2/qemu/300/status/start"))
+                .willReturn(okJson("{\"data\":\"UPID:start\"}")));
+        stubFor(get(urlPathMatching("/api2/json/nodes/pve2/tasks/.*/status"))
+                .willReturn(okJson("{\"data\":{\"status\":\"stopped\",\"exitstatus\":\"OK\"}}")));
+
+        ProxmoxAgent agent = template.provision(cloud, hudson.model.TaskListener.NULL, 300, null);
+
+        assertEquals("pve2", agent.getProxmoxNode());
+        verify(postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/clone"))
+                .withRequestBody(containing("target=pve2")));
+        verify(postRequestedFor(urlEqualTo("/api2/json/nodes/pve2/qemu/300/status/start")));
+        verify(0, postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/300/status/start")));
     }
 
     @Test
@@ -662,6 +801,51 @@ class ProxmoxTemplateTest {
         verify(postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/9000/clone")));
     }
 
+    @Test
+    void localTemplateCandidatesResolvePerOnlineTargetAndSkipMissingMatches() {
+        ProxmoxTemplate template = new ProxmoxTemplate("t", null, 0, "linux", 1);
+        template.setTemplateLocation(TemplateLocation.EACH_TARGET_NODE);
+        template.setTargetNodes(List.of("pve1", "pve2", "pve3"));
+        template.setTemplateSelectionMode(TemplateSelectionMode.TAG);
+        template.setTemplateTag("jenkins-local");
+        ProxmoxCloud cloud = cloudAtWireMock(registerCreds());
+        stubFor(get(urlEqualTo("/api2/json/nodes")).willReturn(okJson("{\"data\":["
+                + "{\"node\":\"pve1\",\"status\":\"online\"},"
+                + "{\"node\":\"pve2\",\"status\":\"online\"},"
+                + "{\"node\":\"pve3\",\"status\":\"online\"}]}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu")).willReturn(okJson("{\"data\":["
+                + "{\"vmid\":9100,\"name\":\"local-1\",\"template\":1,\"tags\":\"jenkins-local\"}]}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve2/qemu")).willReturn(okJson("{\"data\":[]}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve3/qemu")).willReturn(okJson("{\"data\":["
+                + "{\"vmid\":9102,\"name\":\"local-3\",\"template\":1,\"tags\":\"jenkins-local\"}]}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu/9100/config"))
+                .willReturn(okJson("{\"data\":{\"meta\":\"ctime=1000\"}}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve3/qemu/9102/config"))
+                .willReturn(okJson("{\"data\":{\"meta\":\"ctime=1000\"}}")));
+
+        List<ProxmoxTemplate.ProvisioningCandidate> candidates =
+                template.resolveProvisioningCandidates(cloud.getClient(), hudson.model.TaskListener.NULL.getLogger());
+
+        assertEquals(List.of(
+                new ProxmoxTemplate.ProvisioningCandidate("pve1", 9100, "pve1"),
+                new ProxmoxTemplate.ProvisioningCandidate("pve3", 9102, "pve3")), candidates);
+    }
+
+    @Test
+    void multiNodeCandidatesExcludeOfflineTargets() {
+        ProxmoxTemplate template = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        template.setTargetNodes(List.of("pve1", "pve2"));
+        ProxmoxCloud cloud = cloudAtWireMock(registerCreds());
+        stubFor(get(urlEqualTo("/api2/json/nodes")).willReturn(okJson("{\"data\":["
+                + "{\"node\":\"pve1\",\"status\":\"online\"},"
+                + "{\"node\":\"pve2\",\"status\":\"offline\"}]}")));
+
+        List<ProxmoxTemplate.ProvisioningCandidate> candidates =
+                template.resolveProvisioningCandidates(cloud.getClient(), hudson.model.TaskListener.NULL.getLogger());
+
+        assertEquals(List.of(new ProxmoxTemplate.ProvisioningCandidate("pve1", 9000, "pve1")), candidates);
+    }
+
     // --- dynamic template selection: data model ---
 
     @Test
@@ -677,6 +861,22 @@ class ProxmoxTemplateTest {
         assertNull(t.getTemplateNameRegex());
         assertNull(t.getTemplateTag());
         assertEquals(9000, t.getTemplateVmId());
+        assertEquals(TemplateLocation.FIXED_NODE, t.getTemplateLocation());
+        assertEquals(List.of("pve1"), t.getTargetNodes());
+        assertNull(t.getRawTargetNodes());
+    }
+
+    @Test
+    void multiNodePlacementSurvivesXStreamRoundTrip() {
+        ProxmoxTemplate original = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        original.setTargetNodes(List.of("pve1", "pve2"));
+
+        String xml = Jenkins.XSTREAM2.toXML(original);
+        ProxmoxTemplate restored = (ProxmoxTemplate) Jenkins.XSTREAM2.fromXML(xml);
+
+        assertEquals(TemplateLocation.FIXED_NODE, restored.getTemplateLocation());
+        assertEquals(List.of("pve1", "pve2"), restored.getTargetNodes());
+        assertEquals(List.of("pve1", "pve2"), restored.getRawTargetNodes());
     }
 
     @Test
@@ -730,6 +930,31 @@ class ProxmoxTemplateTest {
         tagMissing.setTemplateSelectionMode(TemplateSelectionMode.TAG);
         assertThrows(hudson.model.Descriptor.FormException.class,
                 () -> ProxmoxTemplate.validateTemplateSelection(tagMissing));
+
+        ProxmoxTemplate fixedEmptyTargets = new ProxmoxTemplate("t", "pve1", 9000, "linux", 1);
+        fixedEmptyTargets.setTargetNodes(List.of());
+        assertThrows(hudson.model.Descriptor.FormException.class,
+                () -> ProxmoxTemplate.validateTemplateSelection(fixedEmptyTargets));
+
+        ProxmoxTemplate localMissingTargets = new ProxmoxTemplate("t", null, 0, "linux", 1);
+        localMissingTargets.setTemplateLocation(TemplateLocation.EACH_TARGET_NODE);
+        localMissingTargets.setTemplateSelectionMode(TemplateSelectionMode.TAG);
+        localMissingTargets.setTemplateTag("jenkins");
+        assertThrows(hudson.model.Descriptor.FormException.class,
+                () -> ProxmoxTemplate.validateTemplateSelection(localMissingTargets));
+
+        ProxmoxTemplate localStatic = new ProxmoxTemplate("t", null, 9000, "linux", 1);
+        localStatic.setTemplateLocation(TemplateLocation.EACH_TARGET_NODE);
+        localStatic.setTargetNodes(List.of("pve1"));
+        assertThrows(hudson.model.Descriptor.FormException.class,
+                () -> ProxmoxTemplate.validateTemplateSelection(localStatic));
+
+        ProxmoxTemplate localTag = new ProxmoxTemplate("t", null, 0, "linux", 1);
+        localTag.setTemplateLocation(TemplateLocation.EACH_TARGET_NODE);
+        localTag.setTargetNodes(List.of("pve1", "pve2"));
+        localTag.setTemplateSelectionMode(TemplateSelectionMode.TAG);
+        localTag.setTemplateTag("jenkins");
+        ProxmoxTemplate.validateTemplateSelection(localTag);
     }
 
     @Test

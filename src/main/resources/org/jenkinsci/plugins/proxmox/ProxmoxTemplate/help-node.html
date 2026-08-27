@@ -1,3 +1,5 @@
 <div>
-    Proxmox cluster node name where VMs will be created (e.g. "pve", "node1").
+    Proxmox cluster node that owns the source template. When agents may run on a different node,
+    Proxmox requires this source template and the clone's target storage to be shared. This field
+    is not used when Template Location resolves a matching local template on each Agent Node.
 </div>

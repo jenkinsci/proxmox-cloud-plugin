@@ -8,8 +8,9 @@ import hudson.util.Secret;
 import org.jenkinsci.plugins.proxmox.api.model.*;
 
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
 import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.X509ExtendedTrustManager;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.net.URI;
@@ -17,6 +18,7 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
@@ -97,6 +99,7 @@ public class ProxmoxClient {
         params.put("full", opts.full() ? "1" : "0");
         if (opts.storage() != null && !opts.storage().isBlank()) params.put("storage", opts.storage());
         if (opts.pool() != null && !opts.pool().isBlank()) params.put("pool", opts.pool());
+        if (opts.target() != null && !opts.target().isBlank()) params.put("target", opts.target());
 
         return post("/api2/json/nodes/" + node + "/qemu/" + templateId + "/clone", params);
     }
@@ -364,27 +367,46 @@ public class ProxmoxClient {
     }
 
     // Reachable only when the admin enables ignoreSslErrors (default false) on the ADMINISTER-gated cloud
-    // config page, and the resulting context is applied to this one HttpClient, never the JVM-global default
-    // (no HttpsURLConnection.setDefault*). Both conditions the rule asks for are met; false positive.
+    // config page. The extended trust manager is essential: JSSE wraps a legacy X509TrustManager with
+    // AbstractTrustManagerWrapper, which performs its own hostname check. This manager is applied to this one
+    // HttpClient, never the JVM-global default (no HttpsURLConnection.setDefault*). Both conditions the rule
+    // asks for are met; false positive.
     @SuppressWarnings("lgtm[jenkins/unsafe-calls]")
     private static SSLContext createTrustAllSslContext() {
         try {
             SSLContext sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(null, new TrustManager[]{new X509TrustManager() {
-                @Override
-                public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-
-                @Override
-                public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-
-                @Override
-                public X509Certificate[] getAcceptedIssuers() {
-                    return new X509Certificate[0];
-                }
-            }}, null);
+            sslContext.init(null, new TrustManager[]{createTrustAllTrustManager()}, null);
             return sslContext;
         } catch (NoSuchAlgorithmException | KeyManagementException e) {
             throw new ProxmoxException("Failed to create trust-all SSL context", e);
         }
+    }
+
+    @SuppressWarnings("lgtm[jenkins/unsafe-calls]")
+    static X509ExtendedTrustManager createTrustAllTrustManager() {
+        return new X509ExtendedTrustManager() {
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) {}
+
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) {}
+
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {}
+
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {}
+
+            @Override
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
     }
 }

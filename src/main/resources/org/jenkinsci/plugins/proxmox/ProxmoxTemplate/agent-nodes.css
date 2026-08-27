@@ -1,0 +1,14 @@
+.proxmox-agent-node-list {
+    display: grid;
+    gap: var(--section-padding);
+}
+
+.proxmox-agent-node-option {
+    display: flex;
+    align-items: center;
+}
+
+.proxmox-agent-node-status {
+    color: var(--text-color-secondary);
+    margin-top: var(--section-padding);
+}

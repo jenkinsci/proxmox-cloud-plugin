@@ -218,6 +218,21 @@ class ProxmoxOrphanCleanupTest {
     }
 
     @Test
+    void cleanupScansConfiguredTargetNodesWithoutRegisteredAgents() {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        cloud.getTemplates().get(0).setTargetNodes(List.of("pve1", "pve2"));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
+                .willReturn(okJson("{\"data\":[]}")));
+        stubFor(get(urlEqualTo("/api2/json/nodes/pve2/qemu"))
+                .willReturn(okJson("{\"data\":[]}")));
+
+        new ProxmoxOrphanCleanup().cleanupCloud(cloud, j.jenkins);
+
+        verify(getRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu")));
+        verify(getRequestedFor(urlEqualTo("/api2/json/nodes/pve2/qemu")));
+    }
+
+    @Test
     void cleanup_destroysStoppedVm_andRemovesNode() throws Exception {
         ProxmoxCloud cloud = cloudPointingAtWireMock();
         ProxmoxAgent stopped = newAgent("agent-stopped", "pve1", 303);

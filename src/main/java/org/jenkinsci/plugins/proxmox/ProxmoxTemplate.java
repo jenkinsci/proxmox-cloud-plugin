@@ -19,6 +19,7 @@ import hudson.util.ListBoxModel;
 import jenkins.model.Jenkins;
 import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
+import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
 import org.jenkinsci.plugins.proxmox.api.model.CloneOptions;
 import org.jenkinsci.plugins.proxmox.api.model.ClusterNode;
 import org.jenkinsci.plugins.proxmox.api.model.NetworkDevice;
@@ -32,6 +33,7 @@ import org.jenkinsci.plugins.proxmox.config.OsType;
 import org.jenkinsci.plugins.proxmox.config.WindowsLoginShell;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentials;
 import org.jenkinsci.plugins.proxmox.config.TemplateSelectionMode;
+import org.jenkinsci.plugins.proxmox.config.TemplateLocation;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 import org.kohsuke.stapler.QueryParameter;
@@ -39,8 +41,12 @@ import hudson.RelativePath;
 import org.kohsuke.stapler.verb.POST;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.logging.Level;
@@ -60,6 +66,8 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     private final int numExecutors;
 
     private TemplateSelectionMode templateSelectionMode = TemplateSelectionMode.STATIC_ID;
+    private TemplateLocation templateLocation = TemplateLocation.FIXED_NODE;
+    private List<String> targetNodes;
     private String templateNameRegex;
     private String templateTag;
     private OsType osType = OsType.LINUX;
@@ -109,50 +117,57 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         return label.matches(getLabelSet());
     }
 
-    /**
-     * Clone, configure, and start a VM for the given pre-reserved id, returning the agent. The id is
-     * reserved by {@link ProxmoxCloud#reserveVmId()} under a short lock so concurrent provisions get
-     * distinct ids; the clone/start here runs outside that lock so agents come up in parallel.
-     */
-    public ProxmoxAgent provision(ProxmoxCloud cloud, TaskListener listener, int newVmId,
-                                  ProvisioningActivity.Id activityId) throws Exception {
+    record ProvisioningCandidate(String sourceNode, int sourceVmId, String targetNode) {
+    }
+
+    /** Clone, configure, and start a VM for a reserved id and placement. */
+    ProxmoxAgent provision(ProxmoxCloud cloud, TaskListener listener, int newVmId,
+                           ProvisioningActivity.Id activityId,
+                           ProvisioningCandidate candidate) throws Exception {
         var log = listener.getLogger();
         ProxmoxClient client = cloud.getClient();
 
-        int sourceVmId = resolveTemplateVmId(client, log);
+        String sourceNode = candidate.sourceNode();
+        String targetNode = candidate.targetNode();
+        int sourceVmId = candidate.sourceVmId();
         String vmName = namePrefix + newVmId;
-        log.println("[Proxmox] Cloning template " + sourceVmId + " → VM " + newVmId + " (" + vmName + ")");
+        String route = sourceNode.equals(targetNode)
+                ? " on " + sourceNode
+                : " from " + sourceNode + " to " + targetNode;
+        log.println("[Proxmox] Cloning template " + sourceVmId + route
+                + " → VM " + newVmId + " (" + vmName + ")");
 
         CloneOptions cloneOpts = new CloneOptions(
                 newVmId, vmName,
                 "jenkins-managed;cloud:" + cloud.name + ";template:" + name,
                 cloneStrategy == CloneStrategy.FULL,
-                targetStorage, targetPool);
+                targetStorage, targetPool,
+                sourceNode.equals(targetNode) ? null : targetNode);
 
-        String upid = client.cloneVm(node, sourceVmId, cloneOpts);
-        client.waitForTask(node, upid, cloud.getOperationTimeout());
+        String upid = client.cloneVm(sourceNode, sourceVmId, cloneOpts);
+        client.waitForTask(sourceNode, upid, cloud.getOperationTimeout());
         log.println("[Proxmox] Clone complete");
 
         String sshPublicKey = derivePublicKeyFromCredential(log);
         VmConfig vmConfig = buildVmConfig(sshPublicKey);
         if (vmConfig != null) {
             log.println("[Proxmox] Configuring VM " + newVmId);
-            client.configureVm(node, newVmId, vmConfig);
+            client.configureVm(targetNode, newVmId, vmConfig);
         }
 
         if (networkBridge != null && !networkBridge.isBlank()) {
             log.println("[Proxmox] Setting network bridge to " + networkBridge);
-            client.setNetworkBridge(node, newVmId, networkBridge);
+            client.setNetworkBridge(targetNode, newVmId, networkBridge);
         }
 
         if (diskSizeGb > 0) {
             log.println("[Proxmox] Resizing disk scsi0 to " + diskSizeGb + "G");
-            client.resizeVmDisk(node, newVmId, "scsi0", diskSizeGb);
+            client.resizeVmDisk(targetNode, newVmId, "scsi0", diskSizeGb);
         }
 
         log.println("[Proxmox] Starting VM " + newVmId);
-        upid = client.startVm(node, newVmId);
-        client.waitForTask(node, upid, cloud.getOperationTimeout());
+        upid = client.startVm(targetNode, newVmId);
+        client.waitForTask(targetNode, upid, cloud.getOperationTimeout());
 
         String staticIp = parseStaticIp(ipConfig);
         // The login shell only matters for Windows (it wraps SSHLauncher's start command); Linux
@@ -168,8 +183,91 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         return new ProxmoxAgent(
                 vmName, getRemoteFs(), numExecutors, mode, labelString,
                 launcher,
-                cloud.name, name, node, newVmId,
+                cloud.name, name, targetNode, newVmId,
                 idleTerminationMinutes, maxTotalUses, activityId);
+    }
+
+    /**
+     * Compatibility helper for callers that provision directly. New cloud paths reserve an explicit
+     * placement so concurrent provisions can be balanced.
+     */
+    public ProxmoxAgent provision(ProxmoxCloud cloud, TaskListener listener, int newVmId,
+                                  ProvisioningActivity.Id activityId) throws Exception {
+        List<ProvisioningCandidate> candidates = resolveProvisioningCandidates(cloud.getClient(), listener.getLogger());
+        if (candidates.size() != 1) {
+            throw new ProxmoxException("Direct provisioning requires exactly one eligible Agent Node");
+        }
+        return provision(cloud, listener, newVmId, activityId, candidates.get(0));
+    }
+
+    List<ProvisioningCandidate> resolveProvisioningCandidates(ProxmoxClient client,
+                                                               java.io.PrintStream log) {
+        List<String> targets = getOnlineTargetNodes(client);
+        if (getTemplateLocation() == TemplateLocation.FIXED_NODE) {
+            if (node == null || node.isBlank()) {
+                throw new ProxmoxException("Template Node is required for a fixed source template");
+            }
+            int sourceVmId = resolveTemplateVmId(client, node, log);
+            return targets.stream()
+                    .map(target -> new ProvisioningCandidate(node, sourceVmId, target))
+                    .toList();
+        }
+
+        TemplateSelectionMode selectionMode = getTemplateSelectionMode();
+        if (selectionMode == TemplateSelectionMode.STATIC_ID) {
+            throw new ProxmoxException(
+                    "Matching a local template on each Agent Node requires name-regex or tag selection");
+        }
+        Predicate<VirtualMachine> matcher = selectionMode == TemplateSelectionMode.NAME_REGEX
+                ? TemplateResolver.nameRegexMatcher(templateNameRegex)
+                : TemplateResolver.tagMatcher(templateTag);
+        List<ProvisioningCandidate> candidates = new ArrayList<>();
+        for (String target : targets) {
+            List<VirtualMachine> templates = client.getTemplates(target);
+            List<VirtualMachine> matches = templates.stream().filter(matcher).toList();
+            if (matches.isEmpty()) {
+                String message = "Skipping Agent Node " + target
+                        + ": no local template matches " + selectionDescription();
+                log.println("[Proxmox] " + message);
+                LOGGER.info(message);
+                continue;
+            }
+            VirtualMachine winner = TemplateResolver.pickNewest(client, target, matches);
+            log.println("[Proxmox] Local template on " + target + " resolved to VM " + winner.vmid()
+                    + (winner.name() != null ? " (" + winner.name() + ")" : ""));
+            candidates.add(new ProvisioningCandidate(target, winner.vmid(), target));
+        }
+        if (candidates.isEmpty()) {
+            throw new ProxmoxException("No selected online Agent Node has a local template matching "
+                    + selectionDescription());
+        }
+        return candidates;
+    }
+
+    private List<String> getOnlineTargetNodes(ProxmoxClient client) {
+        List<String> configured = getTargetNodes();
+        if (configured.isEmpty()) {
+            throw new ProxmoxException("At least one Agent Node is required");
+        }
+        if (configured.size() == 1) {
+            return configured;
+        }
+        Set<String> online = client.getNodes().stream()
+                .filter(clusterNode -> "online".equals(clusterNode.status()))
+                .map(ClusterNode::node)
+                .collect(Collectors.toSet());
+        List<String> available = configured.stream().filter(online::contains).toList();
+        if (available.isEmpty()) {
+            throw new ProxmoxException("None of the selected Agent Nodes is online: "
+                    + String.join(", ", configured));
+        }
+        return available;
+    }
+
+    private String selectionDescription() {
+        return getTemplateSelectionMode() == TemplateSelectionMode.NAME_REGEX
+                ? "name regex '" + templateNameRegex + "'"
+                : "tag '" + templateTag + "'";
     }
 
     /**
@@ -179,13 +277,18 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
      * {@link org.jenkinsci.plugins.proxmox.api.ProxmoxException} when nothing matches.
      */
     int resolveTemplateVmId(ProxmoxClient client, java.io.PrintStream log) {
+        return resolveTemplateVmId(client, node, log);
+    }
+
+    int resolveTemplateVmId(ProxmoxClient client, String sourceNode, java.io.PrintStream log) {
         TemplateSelectionMode selectionMode = getTemplateSelectionMode();
         if (selectionMode == TemplateSelectionMode.STATIC_ID) {
             return templateVmId;
         }
         VirtualMachine winner = TemplateResolver.resolve(
-                client, node, selectionMode, templateNameRegex, templateTag);
-        log.println("[Proxmox] Template selection (" + selectionMode + ") resolved to VM " + winner.vmid()
+                client, sourceNode, selectionMode, templateNameRegex, templateTag);
+        log.println("[Proxmox] Template selection (" + selectionMode + ") on " + sourceNode
+                + " resolved to VM " + winner.vmid()
                 + (winner.name() != null ? " (" + winner.name() + ")" : ""));
         return winner.vmid();
     }
@@ -266,19 +369,23 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
      * hold a cap slot and block a working replacement (issues #16, #17).
      */
     public int getNumActiveAgents(ProxmoxCloud cloud) {
+        return getActiveAgentCountsByNode(cloud).values().stream().mapToInt(Integer::intValue).sum();
+    }
+
+    Map<String, Integer> getActiveAgentCountsByNode(ProxmoxCloud cloud) {
         Jenkins jenkins = Jenkins.get();
         long now = System.currentTimeMillis();
         long graceMs = (long) cloud.getOrphanCleanupGracePeriodSeconds() * 1000;
-        int count = 0;
+        Map<String, Integer> counts = new HashMap<>();
         for (var node : jenkins.getNodes()) {
             if (node instanceof ProxmoxAgent agent
                     && cloud.name.equals(agent.getCloudName())
                     && name.equals(agent.getTemplateName())
                     && !agent.isOfflineDead(now, graceMs)) {
-                count++;
+                counts.merge(agent.getProxmoxNode(), 1, Integer::sum);
             }
         }
-        return count;
+        return counts;
     }
 
     public Set<LabelAtom> getLabelSet() {
@@ -291,6 +398,23 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     // Getters
     public String getName() { return name; }
     public String getNode() { return node; }
+    public TemplateLocation getTemplateLocation() {
+        return templateLocation != null ? templateLocation : TemplateLocation.FIXED_NODE;
+    }
+    public List<String> getTargetNodes() {
+        if (targetNodes != null && !targetNodes.isEmpty()) {
+            return List.copyOf(targetNodes);
+        }
+        if (getTemplateLocation() == TemplateLocation.FIXED_NODE
+                && node != null && !node.isBlank()) {
+            return List.of(node);
+        }
+        return List.of();
+    }
+    public List<String> getRawTargetNodes() {
+        return targetNodes != null ? List.copyOf(targetNodes) : null;
+    }
+    public String getTargetNodesCsv() { return String.join(",", getTargetNodes()); }
     public int getTemplateVmId() { return templateVmId; }
     public TemplateSelectionMode getTemplateSelectionMode() {
         // Null for configs saved before dynamic selection existed; those cloned a fixed id.
@@ -336,6 +460,22 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     public String getSearchDomain() { return searchDomain; }
 
     // Setters
+    @DataBoundSetter public void setTemplateLocation(TemplateLocation v) {
+        this.templateLocation = v != null ? v : TemplateLocation.FIXED_NODE;
+    }
+    @DataBoundSetter public void setTargetNodes(List<String> values) {
+        if (values == null) {
+            this.targetNodes = null;
+            return;
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                normalized.add(value.trim());
+            }
+        }
+        this.targetNodes = List.copyOf(normalized);
+    }
     @DataBoundSetter public void setTemplateSelectionMode(TemplateSelectionMode v) {
         this.templateSelectionMode = v != null ? v : TemplateSelectionMode.STATIC_ID;
     }
@@ -421,6 +561,7 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
     }
 
     static void validateTemplateSelection(ProxmoxTemplate template) throws Descriptor.FormException {
+        validatePlacement(template);
         switch (template.getTemplateSelectionMode()) {
             case STATIC_ID -> {
                 if (template.getTemplateVmId() <= 0) {
@@ -443,6 +584,31 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                             "templateTag");
                 }
             }
+        }
+    }
+
+    static void validatePlacement(ProxmoxTemplate template) throws Descriptor.FormException {
+        if (template.getRawTargetNodes() != null && template.getRawTargetNodes().isEmpty()) {
+            throw new Descriptor.FormException("At least one Agent Node is required", "targetNodes");
+        }
+        if (template.getTemplateLocation() == TemplateLocation.EACH_TARGET_NODE
+                && template.getRawTargetNodes() == null) {
+            throw new Descriptor.FormException(
+                    "Agent Nodes must be selected when matching a template on each node", "targetNodes");
+        }
+        if (template.getTargetNodes().isEmpty()) {
+            throw new Descriptor.FormException("At least one Agent Node is required", "targetNodes");
+        }
+        if (template.getTemplateLocation() == TemplateLocation.FIXED_NODE
+                && (template.getNode() == null || template.getNode().isBlank())) {
+            throw new Descriptor.FormException(
+                    "Template Node is required when using one source template", "node");
+        }
+        if (template.getTemplateLocation() == TemplateLocation.EACH_TARGET_NODE
+                && template.getTemplateSelectionMode() == TemplateSelectionMode.STATIC_ID) {
+            throw new Descriptor.FormException(
+                    "Matching a local template on each Agent Node requires name-regex or tag selection",
+                    "templateSelectionMode");
         }
     }
 
@@ -596,6 +762,9 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         @POST
         public ListBoxModel doFillTargetStorageItems(
                 @QueryParameter("node") String node,
+                @QueryParameter("selectedTargetNodes") String selectedTargetNodes,
+                @QueryParameter("templateLocation") String templateLocation,
+                @QueryParameter("currentTargetStorage") String currentTargetStorage,
                 @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
                 @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
                 @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
@@ -604,23 +773,49 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                 return model;
             }
             model.add("(inherit from template)", "");
-            if (node == null || node.isBlank()) return model;
+            List<String> nodes = selectedResourceNodes(node, selectedTargetNodes);
+            if (nodes.isEmpty()) {
+                includeUnavailableChoice(model, currentTargetStorage);
+                return model;
+            }
             ProxmoxClient client = tryCreateClient(apiUrl, credentialsId, ignoreSslErrors);
-            if (client == null) return model;
+            if (client == null) {
+                includeUnavailableChoice(model, currentTargetStorage);
+                return model;
+            }
             try {
-                List<StoragePool> pools = client.getStoragePools(node);
-                for (StoragePool p : pools) {
+                boolean sharedRequired = TemplateLocation.FIXED_NODE.name().equals(templateLocation)
+                        && node != null && !node.isBlank()
+                        && nodes.stream().anyMatch(targetNode -> !node.equals(targetNode));
+                Map<String, StoragePool> common = new java.util.LinkedHashMap<>();
+                boolean first = true;
+                for (String targetNode : nodes) {
+                    Map<String, StoragePool> onNode = client.getStoragePools(targetNode).stream()
+                            .filter(pool -> !sharedRequired || pool.shared() != 0)
+                            .collect(Collectors.toMap(StoragePool::storage, pool -> pool,
+                                    (left, right) -> left, java.util.LinkedHashMap::new));
+                    if (first) {
+                        common.putAll(onNode);
+                        first = false;
+                    } else {
+                        common.keySet().retainAll(onNode.keySet());
+                    }
+                }
+                for (StoragePool p : common.values()) {
                     model.add(p.storage() + " (" + p.type() + ")", p.storage());
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to fetch storage pools for node " + node, e);
+                LOGGER.log(Level.WARNING, "Failed to fetch common storage pools for nodes " + nodes, e);
             }
+            includeUnavailableChoice(model, currentTargetStorage);
             return model;
         }
 
         @POST
         public ListBoxModel doFillNetworkBridgeItems(
                 @QueryParameter("node") String node,
+                @QueryParameter("selectedTargetNodes") String selectedTargetNodes,
+                @QueryParameter("currentNetworkBridge") String currentNetworkBridge,
                 @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
                 @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
                 @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
@@ -629,20 +824,56 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
                 return model;
             }
             model.add("(inherit from template)", "");
-            if (node == null || node.isBlank()) return model;
+            List<String> nodes = selectedResourceNodes(node, selectedTargetNodes);
+            if (nodes.isEmpty()) {
+                includeUnavailableChoice(model, currentNetworkBridge);
+                return model;
+            }
             ProxmoxClient client = tryCreateClient(apiUrl, credentialsId, ignoreSslErrors);
-            if (client == null) return model;
+            if (client == null) {
+                includeUnavailableChoice(model, currentNetworkBridge);
+                return model;
+            }
             try {
-                List<NetworkDevice> devices = client.getNetworkDevices(node);
-                for (NetworkDevice d : devices) {
-                    if (d.isBridge()) {
-                        model.add(d.iface(), d.iface());
+                Set<String> common = new LinkedHashSet<>();
+                boolean first = true;
+                for (String targetNode : nodes) {
+                    Set<String> onNode = client.getNetworkDevices(targetNode).stream()
+                            .filter(NetworkDevice::isBridge)
+                            .map(NetworkDevice::iface)
+                            .collect(Collectors.toCollection(LinkedHashSet::new));
+                    if (first) {
+                        common.addAll(onNode);
+                        first = false;
+                    } else {
+                        common.retainAll(onNode);
                     }
                 }
+                for (String bridge : common) model.add(bridge, bridge);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to fetch network devices for node " + node, e);
+                LOGGER.log(Level.WARNING, "Failed to fetch common network bridges for nodes " + nodes, e);
             }
+            includeUnavailableChoice(model, currentNetworkBridge);
             return model;
+        }
+
+        private void includeUnavailableChoice(ListBoxModel model, String currentValue) {
+            if (currentValue != null && !currentValue.isBlank()
+                    && model.stream().noneMatch(option -> currentValue.equals(option.value))) {
+                model.add(currentValue + " (unavailable)", currentValue);
+            }
+        }
+
+        private List<String> selectedResourceNodes(String node, String selectedTargetNodes) {
+            if (selectedTargetNodes != null) {
+                List<String> selected = java.util.Arrays.stream(selectedTargetNodes.split(","))
+                        .filter(value -> value != null && !value.isBlank())
+                        .map(String::trim)
+                        .distinct()
+                        .toList();
+                if (!selected.isEmpty()) return selected;
+            }
+            return node != null && !node.isBlank() ? List.of(node) : List.of();
         }
 
         @POST
@@ -686,20 +917,28 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         }
 
         @POST
-        public FormValidation doCheckNode(@QueryParameter String value) {
+        public FormValidation doCheckNode(@QueryParameter String value,
+                                          @QueryParameter String templateLocation) {
             if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
                 return FormValidation.ok();
             }
+            if (TemplateLocation.EACH_TARGET_NODE.name().equals(templateLocation)) {
+                return FormValidation.ok();
+            }
             if (value == null || value.isBlank()) {
-                return FormValidation.error("Proxmox Node is required");
+                return FormValidation.error("Template Node is required");
             }
             return FormValidation.ok();
         }
 
         @POST
         public FormValidation doCheckTemplateVmId(@QueryParameter int value,
-                                                  @QueryParameter String templateSelectionMode) {
+                                                  @QueryParameter String templateSelectionMode,
+                                                  @QueryParameter String templateLocation) {
             if (!Jenkins.get().hasPermission(Jenkins.ADMINISTER)) {
+                return FormValidation.ok();
+            }
+            if (TemplateLocation.EACH_TARGET_NODE.name().equals(templateLocation)) {
                 return FormValidation.ok();
             }
             // The static-id select still submits (hidden, not disabled) in dynamic modes; don't
@@ -718,6 +957,8 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
         public FormValidation doCheckTemplateNameRegex(
                 @QueryParameter String value,
                 @QueryParameter String node,
+                @QueryParameter String templateLocation,
+                @QueryParameter("selectedTargetNodes") String selectedTargetNodes,
                 @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
                 @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
                 @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
@@ -733,13 +974,16 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             } catch (PatternSyntaxException e) {
                 return FormValidation.error("Invalid regular expression: " + e.getMessage());
             }
-            return countTemplateMatches(node, apiUrl, credentialsId, ignoreSslErrors, matcher);
+            return countTemplateMatchesForLocation(node, templateLocation, selectedTargetNodes,
+                    apiUrl, credentialsId, ignoreSslErrors, matcher);
         }
 
         @POST
         public FormValidation doCheckTemplateTag(
                 @QueryParameter String value,
                 @QueryParameter String node,
+                @QueryParameter String templateLocation,
+                @QueryParameter("selectedTargetNodes") String selectedTargetNodes,
                 @RelativePath("..") @QueryParameter("apiUrl") String apiUrl,
                 @RelativePath("..") @QueryParameter("credentialsId") String credentialsId,
                 @RelativePath("..") @QueryParameter("ignoreSslErrors") boolean ignoreSslErrors) {
@@ -749,8 +993,36 @@ public class ProxmoxTemplate implements Describable<ProxmoxTemplate> {
             if (value == null || value.isBlank()) {
                 return FormValidation.error("Template tag is required");
             }
-            return countTemplateMatches(node, apiUrl, credentialsId, ignoreSslErrors,
-                    TemplateResolver.tagMatcher(value));
+            return countTemplateMatchesForLocation(node, templateLocation, selectedTargetNodes,
+                    apiUrl, credentialsId, ignoreSslErrors, TemplateResolver.tagMatcher(value));
+        }
+
+        private FormValidation countTemplateMatchesForLocation(
+                String node, String templateLocation, String selectedTargetNodes,
+                String apiUrl, String credentialsId, boolean ignoreSslErrors,
+                Predicate<VirtualMachine> matcher) {
+            if (!TemplateLocation.EACH_TARGET_NODE.name().equals(templateLocation)) {
+                return countTemplateMatches(node, apiUrl, credentialsId, ignoreSslErrors, matcher);
+            }
+            List<String> nodes = selectedResourceNodes(null, selectedTargetNodes);
+            if (nodes.isEmpty()) return FormValidation.ok();
+            ProxmoxClient client = tryCreateClient(apiUrl, credentialsId, ignoreSslErrors);
+            if (client == null) return FormValidation.ok();
+            List<String> missing = new ArrayList<>();
+            try {
+                for (String targetNode : nodes) {
+                    boolean matched = client.getTemplates(targetNode).stream().anyMatch(matcher);
+                    if (!matched) missing.add(targetNode);
+                }
+            } catch (Exception e) {
+                return FormValidation.warning("Could not query Proxmox: " + e.getMessage());
+            }
+            int matching = nodes.size() - missing.size();
+            if (missing.isEmpty()) {
+                return FormValidation.ok("Matches a local template on all " + nodes.size() + " Agent Nodes");
+            }
+            return FormValidation.warning("Matches a local template on " + matching + "/" + nodes.size()
+                    + " Agent Nodes; no match on " + String.join(", ", missing));
         }
 
         /**
