@@ -2,7 +2,7 @@
 
 [![Build Status](https://ci.jenkins.io/buildStatus/icon?job=Plugins%2Fproxmox-cloud-plugin%2Fmain)](https://ci.jenkins.io/job/Plugins/job/proxmox-cloud-plugin/job/main/)
 [![Jenkins Plugin](https://img.shields.io/jenkins/plugin/v/proxmox-cloud.svg)](https://plugins.jenkins.io/proxmox-cloud)
-[![Plugin installs](https://img.shields.io/jenkins/plugin/i/proxmox-cloud.svg?color=blue)](https://plugins.jenkins.io/proxmox-cloud)
+[![Reported plugin installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fplugins.jenkins.io%2Fapi%2Fplugin%2Fproxmox-cloud&query=%24.stats.currentInstalls&label=reported%20installs&color=blue)](https://www.jenkins.io/doc/developer/publishing/usage-statistics/)
 [![GitHub release](https://img.shields.io/github/release/jenkinsci/proxmox-cloud-plugin.svg?label=changelog)](https://github.com/jenkinsci/proxmox-cloud-plugin/releases/latest)
 
 A Jenkins cloud provider that runs your build agents as ephemeral QEMU virtual machines on
