@@ -64,6 +64,25 @@ class ProxmoxClientTest {
     }
 
     @Test
+    void testGetClusterStatus() {
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(okJson("{\"data\":["
+                        + "{\"type\":\"cluster\",\"name\":\"test\",\"nodes\":2,\"quorate\":1},"
+                        + "{\"type\":\"node\",\"name\":\"pve1\",\"online\":1,\"local\":1},"
+                        + "{\"type\":\"node\",\"name\":\"pve2\",\"online\":0,\"local\":0}]}")));
+
+        List<ClusterStatusEntry> entries = client.getClusterStatus();
+
+        assertEquals(3, entries.size());
+        assertEquals("cluster", entries.get(0).type());
+        assertEquals("test", entries.get(0).name());
+        assertEquals(2, entries.get(0).nodes());
+        assertEquals(1, entries.get(0).quorate());
+        assertEquals("pve2", entries.get(2).name());
+        assertEquals(0, entries.get(2).online());
+    }
+
+    @Test
     void testGetTemplates() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
                 .willReturn(okJson("{\"data\":[" +
@@ -212,6 +231,14 @@ class ProxmoxClientTest {
                 .willReturn(aResponse().withStatus(401).withBody("authentication failure")));
 
         assertThrows(ProxmoxAuthenticationException.class, () -> client.getVersion());
+    }
+
+    @Test
+    void testAuthorizationFailure() {
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(aResponse().withStatus(403).withBody("permission check failed")));
+
+        assertThrows(ProxmoxAuthorizationException.class, () -> client.getClusterStatus());
     }
 
     @Test

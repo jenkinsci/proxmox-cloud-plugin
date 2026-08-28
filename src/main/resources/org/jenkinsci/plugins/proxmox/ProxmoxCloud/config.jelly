@@ -75,6 +75,9 @@
         <f:validateButton title="Test Connection" progress="Testing..."
                           method="testConnection"
                           with="apiUrl,credentialsId,ignoreSslErrors"/>
+        <div class="proxmox-cluster-topology jenkins-alert" role="status"
+             aria-live="polite" hidden="hidden"></div>
+        <st:adjunct includes="org.jenkinsci.plugins.proxmox.ProxmoxCloud.cluster-topology"/>
     </j:if>
 
     <f:advanced>

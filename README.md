@@ -88,12 +88,12 @@ Create a dedicated user, role, and API token on your Proxmox host.
 Proxmox v9.x
 ```bash
 # Create a role with minimum required privileges
-pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.GuestAgent.Audit Datastore.AllocateSpace Datastore.Audit SDN.Use"
+pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.GuestAgent.Audit Datastore.AllocateSpace Datastore.Audit SDN.Use Sys.Audit"
 
 # Create a user
 pveum user add jenkins@pve
 
-# Assign the role at the root path (or scope to a specific /pool/... path)
+# Assign the role at the root path. Sys.Audit must be effective at / for cluster detection.
 pveum aclmod / -user jenkins@pve -role JenkinsProvisioner
 
 # Create an API token (--privsep 0 = token inherits user permissions)
@@ -103,12 +103,12 @@ pveum user token add jenkins@pve jenkins-token --privsep 0
 Proxmox v8.x
 ```bash
 # Create a role with minimum required privileges
-pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.Monitor Datastore.AllocateSpace Datastore.Audit SDN.Use"
+pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.Monitor Datastore.AllocateSpace Datastore.Audit SDN.Use Sys.Audit"
 
 # Create a user
 pveum user add jenkins@pve
 
-# Assign the role at the root path (or scope to a specific /pool/... path)
+# Assign the role at the root path. Sys.Audit must be effective at / for cluster detection.
 pveum aclmod / -user jenkins@pve -role JenkinsProvisioner
 
 # Create an API token (--privsep 0 = token inherits user permissions)
@@ -137,6 +137,12 @@ Save the output. You will need:
 | `Datastore.AllocateSpace` | Allocate disk space for clones |
 | `Datastore.Audit` | List available storage pools |
 | `SDN.Use` | Use network bridges |
+| `Sys.Audit` | Detect standalone Proxmox and read cluster membership for placement configuration |
+
+`Sys.Audit` must be assigned at `/` because Proxmox protects cluster topology at the root ACL path.
+If VM permissions are scoped more narrowly, keep a separate read-only `Sys.Audit` assignment at
+`/`. Existing fixed-node templates can still provision without it, but Jenkins cannot safely enable
+cluster-aware placement controls.
 
 ### 2. VM template with cloud-init
 
@@ -238,7 +244,7 @@ it) duplicates an existing template's current on-form values into a new row, lea
 | Field | Value |
 |---|---|
 | Name | e.g. `ubuntu-agent` |
-| Template Location | One template on Template Node, or matching local templates on each Agent Node |
+| Template Location | Single source template, or matching template on each agent node |
 | Template Node | Node containing the source template (e.g. `pve`, `node1`) |
 | Agent Nodes | One or more cluster nodes on which agents may run |
 | Template selection | Static VM id (e.g. `9000`), or dynamic by name regex / tag (see below) |
@@ -261,13 +267,13 @@ Three modes choose the template VM to clone:
   matched against the entire template name (use `.*` for partial matches).
 - **Clone the newest template with a tag**: an exact Proxmox tag, compared case-insensitively.
 
-In **One template on Template Node** mode, all selection modes resolve a source on Template Node.
+In **Single source template** mode, all selection modes resolve a source on Template Node.
 A cross-node clone requires both the source template disks and the clone's Target Storage to be on
 storage shared with the target node. Leave Target Storage blank to retain the source storage. The
 cloud API URL may independently point to a cluster VIP or load balancer. A highly
 available API endpoint does not make a node-local source template available when its node is down.
 
-In **Matching template on each Agent Node** mode, use a name regex or tag. The plugin resolves the
+In **Matching template on each agent node** mode, use a name regex or tag. The plugin resolves the
 newest matching template separately on each selected node and clones it locally, so shared storage
 is not required. Proxmox VM IDs are cluster-wide unique, which is why static VM-ID selection is not
 available in this mode. Administrators are responsible for keeping the separately stored templates
@@ -281,8 +287,9 @@ skipped until a template matches.
 
 With several Agent Nodes selected, the plugin excludes offline nodes and launches the next agent on
 the node with the fewest active agents from the same cloud and template. Concurrent in-flight
-provisions are included in that count. Ties are resolved at random. A one-node selection preserves
-the original behavior without an extra cluster-status request.
+provisions are included in that count. Ties are resolved at random. Runtime provisioning preserves
+the one-node fast path without an extra cluster-status request. The editable configuration form
+uses cluster status to distinguish a standalone host from a cluster that currently has one member.
 
 Under **Advanced → Proxmox Resources**:
 

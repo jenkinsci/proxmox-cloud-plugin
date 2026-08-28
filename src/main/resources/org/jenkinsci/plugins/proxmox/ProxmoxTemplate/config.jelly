@@ -6,6 +6,11 @@
         <f:textbox clazz="required"/>
     </f:entry>
 
+    <j:if test="${!readOnlyMode}">
+        <div class="proxmox-template-topology-warning jenkins-alert jenkins-alert-warning"
+             role="status" aria-live="polite" hidden="hidden"></div>
+    </j:if>
+
     <f:entry title="Template Location" field="templateLocation">
         <j:choose>
             <j:when test="${readOnlyMode}">
@@ -37,7 +42,8 @@
                 <pre class="jenkins-readonly">${instance.targetNodesCsv}</pre>
             </j:when>
             <j:otherwise>
-                <div class="proxmox-agent-nodes" data-selected="${instance != null ? instance.targetNodesCsv : ''}">
+                <div class="proxmox-agent-nodes" data-selected="${instance != null ? instance.targetNodesCsv : ''}"
+                     role="group" aria-label="Agent Nodes">
                     <!-- Jenkins refill/check dependencies read one checkbox as a boolean rather
                          than serializing the checkbox group's json values. Keep an excluded,
                          scalar mirror for those requests while targetNodes remains the persisted
@@ -53,10 +59,12 @@
                     <!-- A checked blank subset marker makes an all-unchecked submission explicit.
                          setTargetNodes normalizes it away, and save-time validation rejects the
                          resulting empty raw list instead of applying the old-config fallback. -->
-                    <input type="checkbox" name="_.targetNodes" json=" " checked="checked"
+                    <input type="checkbox" class="proxmox-agent-node-empty-marker"
+                           name="_.targetNodes" json=" " checked="checked"
                            hidden="hidden" aria-hidden="true" tabindex="-1"/>
                     <div class="proxmox-agent-node-list"></div>
-                    <div class="proxmox-agent-node-status" role="status"></div>
+                    <div class="proxmox-agent-node-summary" role="status" aria-live="polite"></div>
+                    <div class="proxmox-agent-node-status" role="status" aria-live="polite"></div>
                 </div>
             </j:otherwise>
         </j:choose>

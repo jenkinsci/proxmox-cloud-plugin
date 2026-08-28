@@ -1,0 +1,4 @@
+.proxmox-cluster-topology,
+.proxmox-template-topology-warning {
+    margin-block: var(--section-padding);
+}

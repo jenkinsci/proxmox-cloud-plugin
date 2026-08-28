@@ -59,6 +59,11 @@ public class ProxmoxClient {
         return get("/api2/json/nodes", new TypeToken<List<ClusterNode>>() {}.getType());
     }
 
+    public List<ClusterStatusEntry> getClusterStatus() {
+        return get("/api2/json/cluster/status",
+                new TypeToken<List<ClusterStatusEntry>>() {}.getType());
+    }
+
     public List<VirtualMachine> getVms(String node) {
         return get("/api2/json/nodes/" + node + "/qemu",
                 new TypeToken<List<VirtualMachine>>() {}.getType());
@@ -333,9 +338,13 @@ public class ProxmoxClient {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             int status = response.statusCode();
-            if (status == 401 || status == 403) {
+            if (status == 401) {
                 throw new ProxmoxAuthenticationException(
                         "Authentication failed (" + status + "): " + response.body());
+            }
+            if (status == 403) {
+                throw new ProxmoxAuthorizationException(
+                        "Permission denied (" + status + "): " + response.body());
             }
             if (status == 404) {
                 throw new ProxmoxResourceNotFoundException(

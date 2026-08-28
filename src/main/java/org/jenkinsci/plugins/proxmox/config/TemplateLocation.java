@@ -2,8 +2,8 @@ package org.jenkinsci.plugins.proxmox.config;
 
 /** Where the source template for a provision is resolved. */
 public enum TemplateLocation {
-    FIXED_NODE("One template on Template Node"),
-    EACH_TARGET_NODE("Matching template on each Agent Node");
+    FIXED_NODE("Single source template"),
+    EACH_TARGET_NODE("Matching template on each agent node");
 
     private final String displayName;
 

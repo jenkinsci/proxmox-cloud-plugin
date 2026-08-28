@@ -20,8 +20,10 @@ import org.jenkinsci.plugins.cloudstats.CloudStatistics;
 import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
 import org.jenkinsci.plugins.cloudstats.TrackedPlannedNode;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxAuthenticationException;
+import org.jenkinsci.plugins.proxmox.api.ProxmoxAuthorizationException;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
+import org.jenkinsci.plugins.proxmox.api.model.ClusterStatusEntry;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxCloudConfigSync;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentials;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -30,6 +32,8 @@ import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.verb.POST;
 
 import jakarta.servlet.http.HttpServletResponse;
+import net.sf.json.JSONArray;
+import net.sf.json.JSONObject;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -567,6 +571,33 @@ public class ProxmoxCloud extends Cloud {
     @Symbol("proxmox")
     public static class DescriptorImpl extends Descriptor<Cloud> {
 
+        enum ClusterInventoryState {
+            CLUSTER("cluster"),
+            STANDALONE("standalone"),
+            PERMISSION_MISSING("permission-missing"),
+            UNAVAILABLE("unavailable"),
+            UNCONFIGURED("unconfigured");
+
+            private final String jsonValue;
+
+            ClusterInventoryState(String jsonValue) {
+                this.jsonValue = jsonValue;
+            }
+        }
+
+        record ClusterInventoryNode(String name, boolean online) {
+        }
+
+        record ClusterInventory(
+                ClusterInventoryState state,
+                List<ClusterInventoryNode> nodes,
+                String message) {
+
+            ClusterInventory {
+                nodes = nodes != null ? List.copyOf(nodes) : List.of();
+            }
+        }
+
         @Override
         public String getDisplayName() {
             return "Proxmox VE";
@@ -611,10 +642,7 @@ public class ProxmoxCloud extends Cloud {
             }
 
             try {
-                ProxmoxTokenCredentials creds = CredentialsMatchers.firstOrNull(
-                        CredentialsProvider.lookupCredentialsInItemGroup(
-                                ProxmoxTokenCredentials.class, Jenkins.get(), null, Collections.emptyList()),
-                        CredentialsMatchers.withId(credentialsId));
+                ProxmoxTokenCredentials creds = findCredentials(credentialsId);
 
                 if (creds == null) {
                     return FormValidation.error("Credentials not found: " + credentialsId);
@@ -629,25 +657,146 @@ public class ProxmoxCloud extends Cloud {
                             "Connected to Proxmox VE %s - version %d+ is required",
                             version, MIN_PVE_VERSION);
                 }
+                List<String> warnings = new ArrayList<>();
                 if (majorVersion > MAX_KNOWN_PVE_VERSION) {
-                    return FormValidation.warning(
-                            "Connected to Proxmox VE %s - this plugin has been tested with PVE %d. "
-                            + "Please report any issues.", version, MAX_KNOWN_PVE_VERSION);
+                    warnings.add("this plugin has been tested with PVE " + MAX_KNOWN_PVE_VERSION
+                            + "; please report any issues");
                 }
-                return FormValidation.ok("Connected to Proxmox VE " + version);
+                try {
+                    classifyClusterStatus(testClient.getClusterStatus());
+                } catch (ProxmoxAuthorizationException e) {
+                    warnings.add("the token lacks Sys.Audit on /; existing fixed-node provisioning "
+                            + "remains available, but add Sys.Audit to configure cluster-aware placement");
+                } catch (ProxmoxAuthenticationException e) {
+                    throw e;
+                } catch (ProxmoxException e) {
+                    warnings.add("cluster topology could not be checked: " + e.getMessage());
+                }
+                String connected = "Connected to Proxmox VE " + version;
+                if (!warnings.isEmpty()) {
+                    return FormValidation.warning(connected + "; " + String.join("; ", warnings));
+                }
+                return FormValidation.ok(connected);
             } catch (ProxmoxAuthenticationException e) {
-                ProxmoxTokenCredentials creds = CredentialsMatchers.firstOrNull(
-                        CredentialsProvider.lookupCredentialsInItemGroup(
-                                ProxmoxTokenCredentials.class, Jenkins.get(), null, Collections.emptyList()),
-                        CredentialsMatchers.withId(credentialsId));
+                ProxmoxTokenCredentials creds = findCredentials(credentialsId);
                 String tokenId = creds != null ? creds.getTokenId() : "unknown";
                 return FormValidation.error(
                         "Authentication failed (token ID: " + tokenId + "). "
                         + "Verify with: curl -k -H 'Authorization: PVEAPIToken="
                         + tokenId + "=<secret>' " + apiUrl + "/api2/json/version");
+            } catch (ProxmoxAuthorizationException e) {
+                return FormValidation.error("Permission denied while testing the Proxmox connection: "
+                        + e.getMessage());
             } catch (ProxmoxException e) {
                 return FormValidation.error("Connection failed: " + e.getMessage());
             }
+        }
+
+        @POST
+        public HttpResponse doClusterInventory(
+                @QueryParameter String apiUrl,
+                @QueryParameter String credentialsId,
+                @QueryParameter boolean ignoreSslErrors) {
+            Jenkins.get().checkPermission(Jenkins.ADMINISTER);
+            return jsonResponse(clusterInventory(apiUrl, credentialsId, ignoreSslErrors));
+        }
+
+        ClusterInventory clusterInventory(
+                String apiUrl, String credentialsId, boolean ignoreSslErrors) {
+            if (apiUrl == null || apiUrl.isBlank()
+                    || credentialsId == null || credentialsId.isBlank()) {
+                return new ClusterInventory(
+                        ClusterInventoryState.UNCONFIGURED, List.of(),
+                        "Configure the API URL and credentials to detect Proxmox topology.");
+            }
+            ProxmoxTokenCredentials creds = findCredentials(credentialsId);
+            if (creds == null) {
+                return new ClusterInventory(
+                        ClusterInventoryState.UNAVAILABLE, List.of(),
+                        "The configured Proxmox credentials were not found.");
+            }
+            try {
+                ProxmoxClient client = new ProxmoxClient(
+                        apiUrl, creds.getTokenId(), creds.getTokenSecret(), ignoreSslErrors);
+                return classifyClusterStatus(client.getClusterStatus());
+            } catch (ProxmoxAuthorizationException e) {
+                return new ClusterInventory(
+                        ClusterInventoryState.PERMISSION_MISSING, List.of(),
+                        "The Proxmox token lacks Sys.Audit on /. Jenkins cannot determine whether "
+                        + "this endpoint is standalone or clustered. Existing placement is preserved, "
+                        + "but Template Location and Agent Nodes are read-only. Add Sys.Audit at / "
+                        + "and reload this page to edit cluster-aware placement.");
+            } catch (ProxmoxAuthenticationException e) {
+                return new ClusterInventory(
+                        ClusterInventoryState.UNAVAILABLE, List.of(),
+                        "Proxmox authentication failed. Check the configured API token.");
+            } catch (ProxmoxException e) {
+                return new ClusterInventory(
+                        ClusterInventoryState.UNAVAILABLE, List.of(),
+                        "Cluster topology is unavailable: " + e.getMessage());
+            }
+        }
+
+        static ClusterInventory classifyClusterStatus(List<ClusterStatusEntry> entries) {
+            if (entries == null || entries.isEmpty()) {
+                throw new ProxmoxException("Proxmox returned no cluster status entries");
+            }
+            List<ClusterInventoryNode> nodes = entries.stream()
+                    .filter(entry -> entry != null && "node".equals(entry.type()))
+                    .filter(entry -> entry.name() != null && !entry.name().isBlank())
+                    .map(entry -> new ClusterInventoryNode(
+                            entry.name(), entry.online() != null && entry.online() == 1))
+                    .toList();
+            boolean clustered = entries.stream()
+                    .anyMatch(entry -> entry != null && "cluster".equals(entry.type()));
+            if (clustered) {
+                if (nodes.isEmpty()) {
+                    throw new ProxmoxException("Cluster status did not include any member nodes");
+                }
+                return new ClusterInventory(ClusterInventoryState.CLUSTER, nodes, "");
+            }
+
+            List<ClusterStatusEntry> localNodes = entries.stream()
+                    .filter(entry -> entry != null && "node".equals(entry.type()))
+                    .filter(entry -> entry.local() != null && entry.local() == 1)
+                    .filter(entry -> entry.name() != null && !entry.name().isBlank())
+                    .toList();
+            if (nodes.size() != 1 || localNodes.size() != 1) {
+                throw new ProxmoxException(
+                        "Cluster status did not identify exactly one standalone local node");
+            }
+            return new ClusterInventory(ClusterInventoryState.STANDALONE, nodes, "");
+        }
+
+        private static ProxmoxTokenCredentials findCredentials(String credentialsId) {
+            return CredentialsMatchers.firstOrNull(
+                    CredentialsProvider.lookupCredentialsInItemGroup(
+                            ProxmoxTokenCredentials.class, Jenkins.get(), null, Collections.emptyList()),
+                    CredentialsMatchers.withId(credentialsId));
+        }
+
+        private static HttpResponse jsonResponse(ClusterInventory inventory) {
+            JSONObject json = new JSONObject();
+            json.put("state", inventory.state().jsonValue);
+            json.put("message", inventory.message());
+            JSONArray nodes = new JSONArray();
+            for (ClusterInventoryNode inventoryNode : inventory.nodes()) {
+                JSONObject node = new JSONObject();
+                node.put("name", inventoryNode.name());
+                node.put("online", inventoryNode.online());
+                nodes.add(node);
+            }
+            json.put("nodes", nodes);
+            return new HttpResponse() {
+                @Override
+                public void generateResponse(
+                        org.kohsuke.stapler.StaplerRequest2 req,
+                        org.kohsuke.stapler.StaplerResponse2 rsp,
+                        Object node) throws java.io.IOException, jakarta.servlet.ServletException {
+                    rsp.setContentType("application/json;charset=UTF-8");
+                    rsp.getWriter().write(json.toString());
+                }
+            };
         }
 
         @POST
