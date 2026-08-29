@@ -9,6 +9,7 @@ import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -80,18 +81,29 @@ class ProxmoxLauncherTest {
     @Test
     void explicitPowershellWrapsStartCommand() {
         // An explicit PowerShell shell (no launch/probe) wraps the start command as cmd /c '<command>'.
-        SSHLauncher d = delegate();
-        new ProxmoxLauncher("ssh-cred", "java", "", 60, null, JavaDistribution.NONE, 21,
-                WindowsLoginShell.POWERSHELL).configureDelegate(d);
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 60, null,
+                JavaDistribution.NONE, 21, WindowsLoginShell.POWERSHELL);
+        SSHLauncher d = launcher.createDelegate("10.0.0.5");
+        launcher.configureDelegate(d);
+        assertInstanceOf(PowerShellEnvironmentSSHLauncher.class, d);
         assertEquals("cmd /c '", d.getPrefixStartSlaveCmd());
         assertEquals("'", d.getSuffixStartSlaveCmd());
     }
 
     @Test
+    void explicitCmdUsesDefaultSshLauncher() {
+        ProxmoxLauncher launcher = new ProxmoxLauncher("ssh-cred", "java", "", 60, null,
+                JavaDistribution.NONE, 21, WindowsLoginShell.CMD);
+        assertEquals(SSHLauncher.class, launcher.createDelegate("10.0.0.5").getClass());
+    }
+
+    @Test
     void nullLoginShellDoesNotWrap() {
         // Linux agents pass a null shell -> no wrapper, leaving SSHLauncher's defaults.
-        SSHLauncher d = delegate();
-        launcher("java", "", JavaDistribution.NONE).configureDelegate(d);
+        ProxmoxLauncher launcher = launcher("java", "", JavaDistribution.NONE);
+        SSHLauncher d = launcher.createDelegate("10.0.0.5");
+        launcher.configureDelegate(d);
+        assertEquals(SSHLauncher.class, d.getClass());
         assertEquals("", d.getPrefixStartSlaveCmd()); // fixNull default when unset
         assertEquals("", d.getSuffixStartSlaveCmd());
     }

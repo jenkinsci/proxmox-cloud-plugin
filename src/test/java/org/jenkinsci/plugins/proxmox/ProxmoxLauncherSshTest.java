@@ -24,6 +24,7 @@ import java.io.PrintStream;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -461,14 +462,27 @@ class ProxmoxLauncherSshTest {
 
     @Test
     void resolveLoginShellAutoThenWrapsWhenPowershellDetected() throws Exception {
-        // Full AUTO path: probe detects PS 5.x (token only in stderr) -> configureDelegate wraps.
+        // Full AUTO path: probe detects PS 5.x -> the PowerShell-aware delegate reports the
+        // environment correctly and wraps the agent start command.
         registerPasswordCredential();
         ProxmoxLauncher launcher = launcherAuto();
         launcher.setSshConnectionFactory(execFactory("", "parse error + echo " + ProxmoxLauncher.SHELL_PROBE_TOKEN, 1));
         launcher.resolveLoginShell("1.2.3.4", nullLog());
-        SSHLauncher d = new SSHLauncher("1.2.3.4", 22, "ssh-cred");
+        SSHLauncher d = launcher.createDelegate("1.2.3.4");
         launcher.configureDelegate(d);
+        assertInstanceOf(PowerShellEnvironmentSSHLauncher.class, d);
         assertEquals("cmd /c '", d.getPrefixStartSlaveCmd());
         assertEquals("'", d.getSuffixStartSlaveCmd());
+    }
+
+    @Test
+    void resolveLoginShellAutoThenUsesDefaultDelegateWhenAndAndAccepted() throws Exception {
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcherAuto();
+        launcher.setSshConnectionFactory(execFactory(
+                "probe\n" + ProxmoxLauncher.SHELL_PROBE_TOKEN + "\n", "", 0));
+        launcher.resolveLoginShell("1.2.3.4", nullLog());
+
+        assertEquals(SSHLauncher.class, launcher.createDelegate("1.2.3.4").getClass());
     }
 }
