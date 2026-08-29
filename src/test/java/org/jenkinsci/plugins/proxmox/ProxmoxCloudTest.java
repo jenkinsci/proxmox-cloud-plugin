@@ -25,6 +25,7 @@ import org.jenkinsci.plugins.proxmox.config.CloneStrategy;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxCloudConfigSync;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentialsImpl;
+import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -32,11 +33,13 @@ import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
 import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 import org.kohsuke.stapler.HttpResponse;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
@@ -172,6 +175,54 @@ class ProxmoxCloudTest {
         // Once the first id is released, it is free to be chosen again.
         cloud.releaseVmId(first);
         assertEquals(300, cloud.reserveVmId());
+    }
+
+    @Test
+    void selectCandidateUsesFewestAgentsAndDeterministicTieIndex() {
+        var pve1 = new ProxmoxTemplate.ProvisioningCandidate("pve1", 9000, "pve1");
+        var pve2 = new ProxmoxTemplate.ProvisioningCandidate("pve1", 9000, "pve2");
+
+        assertEquals(pve1, ProxmoxCloud.selectCandidate(
+                List.of(pve1, pve2), Map.of("pve1", 2, "pve2", 1), Map.of("pve2", 2), ignored -> 0));
+        assertEquals(pve2, ProxmoxCloud.selectCandidate(
+                List.of(pve1, pve2), Map.of("pve1", 1, "pve2", 1), Map.of(), ignored -> 1));
+    }
+
+    @Test
+    void selectCandidateRejectsNoCandidatesAndInvalidTieIndex() {
+        assertThrows(org.jenkinsci.plugins.proxmox.api.ProxmoxException.class,
+                () -> ProxmoxCloud.selectCandidate(List.of(), Map.of(), Map.of(), ignored -> 0));
+        var candidate = new ProxmoxTemplate.ProvisioningCandidate("pve1", 9000, "pve1");
+        assertThrows(IllegalArgumentException.class,
+                () -> ProxmoxCloud.selectCandidate(
+                        List.of(candidate), Map.of(), Map.of(), ignored -> 1));
+    }
+
+    @Test
+    void reserveProvisionSpreadsConcurrentInflightAgentsAcrossEmptyNodes() {
+        ProxmoxCloud cloud = cloudPointingAtWireMock();
+        cloud.setStartVmId(300);
+        ProxmoxTemplate template = new ProxmoxTemplate("test-template", "pve1", 9000, "linux", 1);
+        template.setTargetNodes(List.of("pve1", "pve2"));
+        stubFor(get(urlEqualTo("/api2/json/nodes")).willReturn(okJson("{\"data\":["
+                + "{\"node\":\"pve1\",\"status\":\"online\"},"
+                + "{\"node\":\"pve2\",\"status\":\"online\"}]}")));
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid")).willReturn(okJson("{\"data\":\"300\"}")));
+        stubFor(get(urlEqualTo("/api2/json/cluster/nextid?vmid=301"))
+                .willReturn(okJson("{\"data\":\"301\"}")));
+
+        ProxmoxCloud.ProvisioningReservation first =
+                cloud.reserveProvision(template, hudson.model.TaskListener.NULL);
+        ProxmoxCloud.ProvisioningReservation second =
+                cloud.reserveProvision(template, hudson.model.TaskListener.NULL);
+        try {
+            assertNotEquals(first.vmId(), second.vmId());
+            assertNotEquals(first.candidate().targetNode(), second.candidate().targetNode(),
+                    "the first in-flight reservation must count against its target");
+        } finally {
+            cloud.releaseProvision(second, template);
+            cloud.releaseProvision(first, template);
+        }
     }
 
     // --- cap accounting excludes offline-dead nodes (issues #16, #17) ---
@@ -327,6 +378,14 @@ class ProxmoxCloudTest {
                 "Copy Template button should render for an editable cloud");
         assertTrue(html.contains("copy-template"),
                 "copy-template adjunct should be loaded for an editable cloud");
+        assertTrue(html.contains("Template Location"));
+        assertTrue(html.contains("Agent Nodes"));
+        assertTrue(html.contains("agent-nodes"));
+        assertTrue(html.contains("cluster-topology"));
+        assertTrue(html.contains("Single source template"));
+        assertTrue(html.contains("Matching template on each agent node"));
+        assertTrue(html.contains("proxmox-agent-node-summary"));
+        assertTrue(html.contains("role=\"group\""));
     }
 
     @Test
@@ -345,6 +404,9 @@ class ProxmoxCloudTest {
 
         assertFalse(html.contains("proxmox-copy-template-button"),
                 "Copy Template control must not render in read-only mode");
+        assertFalse(html.contains("proxmox-cluster-topology"),
+                "Cluster topology inventory must not run in read-only mode");
+        assertTrue(html.contains("Single source template"));
     }
 
     @Test
@@ -389,10 +451,19 @@ class ProxmoxCloudTest {
         return "http://localhost:" + wireMock.getPort();
     }
 
+    private void stubClusterStatus() {
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(okJson("{\"data\":["
+                        + "{\"type\":\"cluster\",\"name\":\"test\",\"nodes\":2,\"quorate\":1},"
+                        + "{\"type\":\"node\",\"name\":\"pve1\",\"online\":1,\"local\":1},"
+                        + "{\"type\":\"node\",\"name\":\"pve2\",\"online\":0,\"local\":0}]}")));
+    }
+
     @Test
     void doTestConnectionSucceeds() {
         String cred = registerProxmoxCreds();
         stubFor(get(urlEqualTo("/api2/json/version")).willReturn(okJson("{\"data\":{\"version\":\"8.2.4\"}}")));
+        stubClusterStatus();
         FormValidation r = cloudDescriptor().doTestConnection(apiUrl(), cred, false);
         assertEquals(FormValidation.Kind.OK, r.kind);
         assertTrue(r.getMessage().contains("8.2.4"));
@@ -409,6 +480,7 @@ class ProxmoxCloudTest {
     void doTestConnectionWarnsOnNewerVersion() {
         String cred = registerProxmoxCreds();
         stubFor(get(urlEqualTo("/api2/json/version")).willReturn(okJson("{\"data\":{\"version\":\"10.1\"}}")));
+        stubClusterStatus();
         assertEquals(FormValidation.Kind.WARNING, cloudDescriptor().doTestConnection(apiUrl(), cred, false).kind);
     }
 
@@ -417,7 +489,52 @@ class ProxmoxCloudTest {
         // parseMajorVersion returns 0 for a non-numeric version, so no min/max check fires.
         String cred = registerProxmoxCreds();
         stubFor(get(urlEqualTo("/api2/json/version")).willReturn(okJson("{\"data\":{\"version\":\"weird\"}}")));
+        stubClusterStatus();
         assertEquals(FormValidation.Kind.OK, cloudDescriptor().doTestConnection(apiUrl(), cred, false).kind);
+    }
+
+    @Test
+    void doTestConnectionWarnsWhenSysAuditIsMissing() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/version"))
+                .willReturn(okJson("{\"data\":{\"version\":\"9.2.2\"}}")));
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(aResponse().withStatus(403).withBody("permission check failed")));
+
+        FormValidation result = cloudDescriptor().doTestConnection(apiUrl(), cred, false);
+
+        assertEquals(FormValidation.Kind.WARNING, result.kind);
+        assertTrue(result.getMessage().contains("Sys.Audit"));
+        assertTrue(result.getMessage().contains("fixed-node provisioning remains available"));
+    }
+
+    @Test
+    void doTestConnectionCombinesVersionAndSysAuditWarnings() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/version"))
+                .willReturn(okJson("{\"data\":{\"version\":\"10.1\"}}")));
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(aResponse().withStatus(403).withBody("permission check failed")));
+
+        FormValidation result = cloudDescriptor().doTestConnection(apiUrl(), cred, false);
+
+        assertEquals(FormValidation.Kind.WARNING, result.kind);
+        assertTrue(result.getMessage().contains("tested with PVE 9"));
+        assertTrue(result.getMessage().contains("Sys.Audit"));
+    }
+
+    @Test
+    void doTestConnectionWarnsWhenTopologyIsUnavailable() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/version"))
+                .willReturn(okJson("{\"data\":{\"version\":\"9.2.2\"}}")));
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(aResponse().withStatus(500).withBody("boom")));
+
+        FormValidation result = cloudDescriptor().doTestConnection(apiUrl(), cred, false);
+
+        assertEquals(FormValidation.Kind.WARNING, result.kind);
+        assertTrue(result.getMessage().contains("cluster topology could not be checked"));
     }
 
     @Test
@@ -450,6 +567,130 @@ class ProxmoxCloudTest {
         FormValidation r = cloudDescriptor().doTestConnection(apiUrl(), "nope", false);
         assertEquals(FormValidation.Kind.ERROR, r.kind);
         assertTrue(r.getMessage().contains("Credentials not found"));
+    }
+
+    @Test
+    void clusterInventoryDetectsClusterAndMemberAvailability() {
+        String cred = registerProxmoxCreds();
+        stubClusterStatus();
+
+        ProxmoxCloud.DescriptorImpl.ClusterInventory result =
+                cloudDescriptor().clusterInventory(apiUrl(), cred, false);
+
+        assertEquals(ProxmoxCloud.DescriptorImpl.ClusterInventoryState.CLUSTER, result.state());
+        assertEquals(List.of("pve1", "pve2"),
+                result.nodes().stream().map(
+                        ProxmoxCloud.DescriptorImpl.ClusterInventoryNode::name).toList());
+        assertTrue(result.nodes().get(0).online());
+        assertFalse(result.nodes().get(1).online());
+    }
+
+    @Test
+    void clusterInventoryKeepsOneNodeClusterDistinctFromStandalone() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(okJson("{\"data\":["
+                        + "{\"type\":\"cluster\",\"name\":\"one\",\"nodes\":1,\"quorate\":1},"
+                        + "{\"type\":\"node\",\"name\":\"pve1\",\"online\":1,\"local\":1}]}")));
+
+        ProxmoxCloud.DescriptorImpl.ClusterInventory result =
+                cloudDescriptor().clusterInventory(apiUrl(), cred, false);
+
+        assertEquals(ProxmoxCloud.DescriptorImpl.ClusterInventoryState.CLUSTER, result.state());
+        assertEquals(List.of("pve1"),
+                result.nodes().stream().map(
+                        ProxmoxCloud.DescriptorImpl.ClusterInventoryNode::name).toList());
+    }
+
+    @Test
+    void clusterInventoryDetectsStandaloneLocalNode() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(okJson("{\"data\":["
+                        + "{\"type\":\"node\",\"name\":\"clop\",\"online\":1,\"local\":1}]}")));
+
+        ProxmoxCloud.DescriptorImpl.ClusterInventory result =
+                cloudDescriptor().clusterInventory(apiUrl(), cred, false);
+
+        assertEquals(ProxmoxCloud.DescriptorImpl.ClusterInventoryState.STANDALONE, result.state());
+        assertEquals("clop", result.nodes().get(0).name());
+    }
+
+    @Test
+    void clusterInventoryReportsMissingSysAuditWithoutDiscardingState() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(aResponse().withStatus(403).withBody("permission check failed")));
+
+        ProxmoxCloud.DescriptorImpl.ClusterInventory result =
+                cloudDescriptor().clusterInventory(apiUrl(), cred, false);
+
+        assertEquals(
+                ProxmoxCloud.DescriptorImpl.ClusterInventoryState.PERMISSION_MISSING,
+                result.state());
+        assertTrue(result.message().contains("Sys.Audit"));
+        assertTrue(result.nodes().isEmpty());
+    }
+
+    @Test
+    void clusterInventoryReportsAuthenticationAndMalformedResponsesAsUnavailable() {
+        String cred = registerProxmoxCreds();
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(aResponse().withStatus(401).withBody("authentication failed")));
+
+        ProxmoxCloud.DescriptorImpl.ClusterInventory authentication =
+                cloudDescriptor().clusterInventory(apiUrl(), cred, false);
+
+        assertEquals(
+                ProxmoxCloud.DescriptorImpl.ClusterInventoryState.UNAVAILABLE,
+                authentication.state());
+        assertTrue(authentication.message().contains("authentication failed"));
+
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .atPriority(1)
+                .willReturn(okJson("{\"data\":[]}")));
+        ProxmoxCloud.DescriptorImpl.ClusterInventory malformed =
+                cloudDescriptor().clusterInventory(apiUrl(), cred, false);
+        assertEquals(
+                ProxmoxCloud.DescriptorImpl.ClusterInventoryState.UNAVAILABLE,
+                malformed.state());
+        assertTrue(malformed.message().contains("no cluster status entries"));
+    }
+
+    @Test
+    void clusterInventoryHandlesMissingConfigurationAndCredential() {
+        ProxmoxCloud.DescriptorImpl descriptor = cloudDescriptor();
+
+        assertEquals(
+                ProxmoxCloud.DescriptorImpl.ClusterInventoryState.UNCONFIGURED,
+                descriptor.clusterInventory("", "", false).state());
+        ProxmoxCloud.DescriptorImpl.ClusterInventory missing =
+                descriptor.clusterInventory(apiUrl(), "missing", false);
+        assertEquals(ProxmoxCloud.DescriptorImpl.ClusterInventoryState.UNAVAILABLE, missing.state());
+        assertTrue(missing.message().contains("credentials were not found"));
+    }
+
+    @Test
+    void classifyClusterStatusRejectsAmbiguousStandaloneResponse() {
+        assertThrows(ProxmoxException.class,
+                () -> ProxmoxCloud.DescriptorImpl.classifyClusterStatus(List.of()));
+    }
+
+    @Test
+    void clusterInventoryEndpointRequiresAdminPermission() throws Exception {
+        j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
+        j.jenkins.setAuthorizationStrategy(new MockAuthorizationStrategy()
+                .grant(Jenkins.ADMINISTER).everywhere().to("admin")
+                .grant(Jenkins.READ).everywhere().to("reader"));
+        ProxmoxCloud.DescriptorImpl descriptor = cloudDescriptor();
+
+        try (ACLContext ignored = ACL.as2(User.getById("reader", true).impersonate2())) {
+            assertThrows(AccessDeniedException.class,
+                    () -> descriptor.doClusterInventory("", "", false));
+        }
+        try (ACLContext ignored = ACL.as2(User.getById("admin", true).impersonate2())) {
+            assertNotNull(descriptor.doClusterInventory("", "", false));
+        }
     }
 
     @Test

@@ -64,6 +64,25 @@ class ProxmoxClientTest {
     }
 
     @Test
+    void testGetClusterStatus() {
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(okJson("{\"data\":["
+                        + "{\"type\":\"cluster\",\"name\":\"test\",\"nodes\":2,\"quorate\":1},"
+                        + "{\"type\":\"node\",\"name\":\"pve1\",\"online\":1,\"local\":1},"
+                        + "{\"type\":\"node\",\"name\":\"pve2\",\"online\":0,\"local\":0}]}")));
+
+        List<ClusterStatusEntry> entries = client.getClusterStatus();
+
+        assertEquals(3, entries.size());
+        assertEquals("cluster", entries.get(0).type());
+        assertEquals("test", entries.get(0).name());
+        assertEquals(2, entries.get(0).nodes());
+        assertEquals(1, entries.get(0).quorate());
+        assertEquals("pve2", entries.get(2).name());
+        assertEquals(0, entries.get(2).online());
+    }
+
+    @Test
     void testGetTemplates() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/qemu"))
                 .willReturn(okJson("{\"data\":[" +
@@ -92,14 +111,29 @@ class ProxmoxClientTest {
         stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/100/clone"))
                 .willReturn(okJson("{\"data\":\"UPID:pve1:00001234:0000ABCD:12345678:qmclone:100:user@pve:\"}")));
 
-        CloneOptions opts = new CloneOptions(300, "test-vm", "description", true, "local-lvm", null);
+        CloneOptions opts = new CloneOptions(300, "test-vm", "description", true, "local-lvm", null, "pve2");
         String upid = client.cloneVm("pve1", 100, opts);
         assertNotNull(upid);
 
         verify(postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/100/clone"))
                 .withRequestBody(containing("newid=300"))
                 .withRequestBody(containing("name=test-vm"))
-                .withRequestBody(containing("full=1")));
+                .withRequestBody(containing("full=1"))
+                .withRequestBody(containing("target=pve2")));
+    }
+
+    @Test
+    void testCloneVmOmitsBlankTargetForLocalClone() {
+        stubFor(post(urlEqualTo("/api2/json/nodes/pve1/qemu/100/clone"))
+                .willReturn(okJson("{\"data\":\"UPID:clone\"}")));
+
+        client.cloneVm("pve1", 100,
+                new CloneOptions(300, "test-vm", null, true, null, null, null));
+
+        verify(postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/100/clone"))
+                .withRequestBody(containing("newid=300")));
+        verify(0, postRequestedFor(urlEqualTo("/api2/json/nodes/pve1/qemu/100/clone"))
+                .withRequestBody(containing("target=")));
     }
 
     @Test
@@ -144,11 +178,13 @@ class ProxmoxClientTest {
     @Test
     void testGetStoragePools() {
         stubFor(get(urlEqualTo("/api2/json/nodes/pve1/storage"))
-                .willReturn(okJson("{\"data\":[{\"storage\":\"local-lvm\",\"type\":\"lvmthin\",\"avail\":107374182400}]}")));
+                .willReturn(okJson("{\"data\":[{\"storage\":\"local-lvm\",\"type\":\"lvmthin\","
+                        + "\"avail\":107374182400,\"shared\":1}]}")));
 
         List<StoragePool> pools = client.getStoragePools("pve1");
         assertEquals(1, pools.size());
         assertEquals("local-lvm", pools.get(0).storage());
+        assertEquals(1, pools.get(0).shared());
     }
 
     @Test
@@ -195,6 +231,14 @@ class ProxmoxClientTest {
                 .willReturn(aResponse().withStatus(401).withBody("authentication failure")));
 
         assertThrows(ProxmoxAuthenticationException.class, () -> client.getVersion());
+    }
+
+    @Test
+    void testAuthorizationFailure() {
+        stubFor(get(urlEqualTo("/api2/json/cluster/status"))
+                .willReturn(aResponse().withStatus(403).withBody("permission check failed")));
+
+        assertThrows(ProxmoxAuthorizationException.class, () -> client.getClusterStatus());
     }
 
     @Test
@@ -355,11 +399,18 @@ class ProxmoxClientTest {
     }
 
     @Test
-    void ignoreSslErrorsBuildsTrustAllClient() {
-        // Constructing with ignoreSslErrors=true runs createTrustAllSslContext() to install the
-        // trust-all SSLContext on the client. (The no-op X509TrustManager method bodies only execute
-        // during a real TLS handshake against a hostname-matching self-signed cert, which needs a
-        // keystore fixture; that is left uncovered.)
+    void ignoreSslErrorsUsesExtendedTrustManagerForCertificateAndHostnameChecks() {
+        // JSSE adds hostname verification around a legacy X509TrustManager. An extended manager is
+        // therefore required for a cluster VIP absent from a node certificate's SAN.
+        var trustManager = ProxmoxClient.createTrustAllTrustManager();
+        assertDoesNotThrow(() -> trustManager.checkClientTrusted(null, null));
+        assertDoesNotThrow(() -> trustManager.checkServerTrusted(null, null));
+        assertDoesNotThrow(() -> trustManager.checkClientTrusted(null, null, (java.net.Socket) null));
+        assertDoesNotThrow(() -> trustManager.checkServerTrusted(null, null, (java.net.Socket) null));
+        assertDoesNotThrow(() -> trustManager.checkClientTrusted(null, null, (javax.net.ssl.SSLEngine) null));
+        assertDoesNotThrow(() -> trustManager.checkServerTrusted(null, null, (javax.net.ssl.SSLEngine) null));
+        assertEquals(0, trustManager.getAcceptedIssuers().length);
+
         ProxmoxClient sslClient = new ProxmoxClient(
                 "https://localhost:1", "user@pve!token", Secret.fromString("test-secret-uuid"), true);
         assertNotNull(sslClient);

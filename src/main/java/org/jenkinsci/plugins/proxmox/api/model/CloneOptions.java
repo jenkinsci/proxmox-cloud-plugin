@@ -5,5 +5,6 @@ public record CloneOptions(int newVmId,
                             String description,
                             boolean full,
                             String storage,
-                            String pool) {
+                            String pool,
+                            String target) {
 }

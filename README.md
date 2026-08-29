@@ -2,7 +2,7 @@
 
 [![Build Status](https://ci.jenkins.io/buildStatus/icon?job=Plugins%2Fproxmox-cloud-plugin%2Fmain)](https://ci.jenkins.io/job/Plugins/job/proxmox-cloud-plugin/job/main/)
 [![Jenkins Plugin](https://img.shields.io/jenkins/plugin/v/proxmox-cloud.svg)](https://plugins.jenkins.io/proxmox-cloud)
-[![Plugin installs](https://img.shields.io/jenkins/plugin/i/proxmox-cloud.svg?color=blue)](https://plugins.jenkins.io/proxmox-cloud)
+[![Reported plugin installs](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fplugins.jenkins.io%2Fapi%2Fplugin%2Fproxmox-cloud&query=%24.stats.currentInstalls&label=reported%20installs&color=blue)](https://www.jenkins.io/doc/developer/publishing/usage-statistics/)
 [![GitHub release](https://img.shields.io/github/release/jenkinsci/proxmox-cloud-plugin.svg?label=changelog)](https://github.com/jenkinsci/proxmox-cloud-plugin/releases/latest)
 
 A Jenkins cloud provider that runs your build agents as ephemeral QEMU virtual machines on
@@ -88,12 +88,12 @@ Create a dedicated user, role, and API token on your Proxmox host.
 Proxmox v9.x
 ```bash
 # Create a role with minimum required privileges
-pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.GuestAgent.Audit Datastore.AllocateSpace Datastore.Audit SDN.Use"
+pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.GuestAgent.Audit Datastore.AllocateSpace Datastore.Audit SDN.Use Sys.Audit"
 
 # Create a user
 pveum user add jenkins@pve
 
-# Assign the role at the root path (or scope to a specific /pool/... path)
+# Assign the role at the root path. Sys.Audit must be effective at / for cluster detection.
 pveum aclmod / -user jenkins@pve -role JenkinsProvisioner
 
 # Create an API token (--privsep 0 = token inherits user permissions)
@@ -103,12 +103,12 @@ pveum user token add jenkins@pve jenkins-token --privsep 0
 Proxmox v8.x
 ```bash
 # Create a role with minimum required privileges
-pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.Monitor Datastore.AllocateSpace Datastore.Audit SDN.Use"
+pveum role add JenkinsProvisioner -privs "VM.Allocate VM.Clone VM.Audit VM.Config.Disk VM.Config.CPU VM.Config.Memory VM.Config.Network VM.Config.Options VM.Config.Cloudinit VM.PowerMgmt VM.Monitor Datastore.AllocateSpace Datastore.Audit SDN.Use Sys.Audit"
 
 # Create a user
 pveum user add jenkins@pve
 
-# Assign the role at the root path (or scope to a specific /pool/... path)
+# Assign the role at the root path. Sys.Audit must be effective at / for cluster detection.
 pveum aclmod / -user jenkins@pve -role JenkinsProvisioner
 
 # Create an API token (--privsep 0 = token inherits user permissions)
@@ -137,6 +137,12 @@ Save the output. You will need:
 | `Datastore.AllocateSpace` | Allocate disk space for clones |
 | `Datastore.Audit` | List available storage pools |
 | `SDN.Use` | Use network bridges |
+| `Sys.Audit` | Detect standalone Proxmox and read cluster membership for placement configuration |
+
+`Sys.Audit` must be assigned at `/` because Proxmox protects cluster topology at the root ACL path.
+If VM permissions are scoped more narrowly, keep a separate read-only `Sys.Audit` assignment at
+`/`. Existing fixed-node templates can still provision without it, but Jenkins cannot safely enable
+cluster-aware placement controls.
 
 ### 2. VM template with cloud-init
 
@@ -220,9 +226,9 @@ Go to **Manage Jenkins → Clouds → New cloud → Proxmox VE**.
 | Field | Value |
 |---|---|
 | Cloud Name | e.g. `proxmox` |
-| API URL | `https://<proxmox-host>:8006` |
+| API URL | `https://<proxmox-host-or-cluster-vip>:8006` |
 | Credentials | Select the **Proxmox API Token** credential created above |
-| Ignore SSL Errors | Check if using self-signed certs (Proxmox default) |
+| Ignore SSL Errors | Disable certificate-chain and hostname checks for self-signed node certificates or a VIP absent from the certificate; use only on a trusted network |
 
 Click **Test Connection**; it should report the Proxmox VE version.
 
@@ -238,7 +244,9 @@ it) duplicates an existing template's current on-form values into a new row, lea
 | Field | Value |
 |---|---|
 | Name | e.g. `ubuntu-agent` |
-| Proxmox Node | Your node name (e.g. `pve`, `node1`) |
+| Template Location | Single source template, or matching template on each agent node |
+| Template Node | Node containing the source template (e.g. `pve`, `node1`) |
+| Agent Nodes | One or more cluster nodes on which agents may run |
 | Template selection | Static VM id (e.g. `9000`), or dynamic by name regex / tag (see below) |
 | Labels | e.g. `linux ubuntu` |
 | Number of Executors | `1` |
@@ -259,18 +267,35 @@ Three modes choose the template VM to clone:
   matched against the entire template name (use `.*` for partial matches).
 - **Clone the newest template with a tag**: an exact Proxmox tag, compared case-insensitively.
 
-The dynamic modes re-resolve on the configured node at every provision, so templates rebuilt on a
-schedule under fresh VM ids are picked up automatically. When several templates match, the most
-recently created wins (highest `ctime` from the VM config's `meta` property; templates without one
-count as oldest; ties go to the highest VM id). The form shows how many templates currently match
-and which one would be cloned; zero matches is allowed at save time but provisioning fails until a
-template matches.
+In **Single source template** mode, all selection modes resolve a source on Template Node.
+A cross-node clone requires both the source template disks and the clone's Target Storage to be on
+storage shared with the target node. Leave Target Storage blank to retain the source storage. The
+cloud API URL may independently point to a cluster VIP or load balancer. A highly
+available API endpoint does not make a node-local source template available when its node is down.
+
+In **Matching template on each agent node** mode, use a name regex or tag. The plugin resolves the
+newest matching template separately on each selected node and clones it locally, so shared storage
+is not required. Proxmox VM IDs are cluster-wide unique, which is why static VM-ID selection is not
+available in this mode. Administrators are responsible for keeping the separately stored templates
+equivalent.
+
+Dynamic selection is resolved at every provision, so templates rebuilt under fresh VM IDs are
+picked up automatically. When several templates match on a node, the most recently created wins
+(highest `ctime` from the VM config's `meta` property; templates without one count as oldest; ties
+go to the highest VM ID). Zero matches is allowed at save time. A node without a local match is
+skipped until a template matches.
+
+With several Agent Nodes selected, the plugin excludes offline nodes and launches the next agent on
+the node with the fewest active agents from the same cloud and template. Concurrent in-flight
+provisions are included in that count. Ties are resolved at random. Runtime provisioning preserves
+the one-node fast path without an extra cluster-status request. The editable configuration form
+uses cluster status to distinguish a standalone host from a cluster that currently has one member.
 
 Under **Advanced → Proxmox Resources**:
 
 | Field | Value | Description |
 |---|---|---|
-| Target Storage | *(blank)* | Storage pool for clone disk. Blank = same as template |
+| Target Storage | *(blank)* | Storage pool for clone disk. Blank = same as template. Must be shared for a cross-node clone |
 | Target Pool | *(blank)* | Proxmox resource pool to place the VM in. Blank = none |
 | CPU Cores | `0` | 0 = inherit from template |
 | Memory MB | `0` | 0 = inherit from template |
@@ -540,9 +565,11 @@ apply immediately.
 
 ### YAML structure
 
-Configuration is layered. A cloud inherits `cloudDefaults`; an agent template inherits
-`agentDefaults`, then per-node `agentDefaults-<node>`, then its own keys (later layers win). Each
-agent template links to one or more clouds by their `cloudConfigurations` key via `cloudIds`.
+Configuration is layered. A cloud inherits `cloudDefaults`; an agent template in `FIXED_NODE` mode
+inherits `agentDefaults`, then per-source-node `agentDefaults-<node>`, then its own keys (later
+layers win). `EACH_TARGET_NODE` templates do not apply per-node defaults because they have no single
+source node. Each agent template links to one or more clouds by their `cloudConfigurations` key via
+`cloudIds`.
 
 ```yaml
 # Defaults applied to every cloud below.
@@ -593,7 +620,9 @@ agentDefaults-pve2:
 agentConfigurations:
   linux-builder:
     cloudIds: ["primary", "secondary"] # this template is added to both clouds
-    node: "pve1"                        # selects agentDefaults-pve1
+    templateLocation: FIXED_NODE         # default; one source template
+    node: "pve1"                        # Template Node; selects agentDefaults-pve1
+    targetNodes: ["pve1", "pve2"]       # eligible Agent Nodes
     name: "linux-builder"
     labelString: "linux docker"
     numExecutors: 2
@@ -621,6 +650,16 @@ agentConfigurations:
     templateSelectionMode: NAME_REGEX   # STATIC_ID (default), NAME_REGEX, or TAG
     templateNameRegex: "agent-.*"       # newest matching template is cloned; templateVmId not needed
 
+  local-storage-builder:
+    cloudIds: ["primary"]
+    templateLocation: EACH_TARGET_NODE   # no Template Node and no shared storage required
+    targetNodes: ["pve1", "pve2"]
+    name: "local-storage-builder"
+    labelString: "linux local-storage"
+    numExecutors: 1
+    templateSelectionMode: TAG
+    templateTag: "jenkins-local-agent"   # each target needs a local template carrying this tag
+
   windows-builder:
     cloudIds: ["primary"]
     node: "pve1"
@@ -638,18 +677,21 @@ Recognised cloud keys: `name`, `apiUrl`, `credentialsId`, `ignoreSslErrors`, `in
 `operationTimeoutSec`, `startVmId`, `cleanupOrphanedAgents`, `orphanCleanupPeriodSeconds`,
 `orphanCleanupGracePeriodSeconds`.
 
-Recognised agent keys: `node`, `name`, `templateVmId`, `templateSelectionMode`,
-`templateNameRegex`, `templateTag`, `labelString`, `numExecutors`,
+Recognised agent keys: `node`, `targetNodes`, `templateLocation`, `name`, `templateVmId`,
+`templateSelectionMode`, `templateNameRegex`, `templateTag`, `labelString`, `numExecutors`,
 `cloneStrategy`, `osType`, `targetStorage`, `targetPool`, `cores`, `memoryMb`, `diskSizeGb`,
 `networkBridge`, `remoteFs`, `mode`, `credentialsId`, `javaDistribution`, `javaMajorVersion`,
 `javaPath`, `jvmOptions`, `idleTerminationMinutes`, `instanceCap`, `instanceMin`, `maxTotalUses`,
 `namePrefix`, `startupWaitSeconds`, `ciUser`, `ipConfig`, `nameserver`, `searchDomain`.
 
+`templateLocation` defaults to `FIXED_NODE`. If `targetNodes` is omitted in that mode, it defaults
+to the Template Node in `node` for compatibility with existing files. An explicit empty list is
+invalid. `EACH_TARGET_NODE` requires a non-empty `targetNodes` list and does not require `node`.
+
 `templateSelectionMode` defaults to `STATIC_ID`, which requires `templateVmId`; `NAME_REGEX`
 requires `templateNameRegex` (a Java regex matched against the entire template name) and `TAG`
-requires `templateTag` (exact tag, case-insensitive). The dynamic modes resolve the newest matching
-template on the agent's `node` at every provision; see
-[Template selection](#template-selection).
+requires `templateTag` (exact tag, case-insensitive). `EACH_TARGET_NODE` requires `NAME_REGEX` or
+`TAG`; see [Template selection](#template-selection).
 
 For templates with `osType: WINDOWS`, `remoteFs` is required and `javaDistribution` must be `NONE`
 (Java auto-install is Linux-only); the sync rejects a file that breaks either rule, including a

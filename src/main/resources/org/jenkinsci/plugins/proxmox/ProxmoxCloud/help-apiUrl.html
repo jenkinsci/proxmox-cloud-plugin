@@ -1,3 +1,6 @@
 <div>
     The URL of your Proxmox VE API endpoint, e.g. <code>https://proxmox.example.com:8006</code>.
+    For a cluster this may be a virtual IP, load balancer, or DNS name that remains available when
+    an individual API node is offline. Node-scoped VM operations are selected separately in each
+    agent template.
 </div>

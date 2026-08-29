@@ -97,9 +97,13 @@ public class ProxmoxConfigLoader {
                             agentId, cloudId));
                 }
 
+                String locationValue = getStr(agentSpecificConfig, "templateLocation",
+                        getStr(agentDefaults, "templateLocation", TemplateLocation.FIXED_NODE.name()));
+                TemplateLocation location = parseEnum(
+                        TemplateLocation.class, locationValue, "templateLocation");
                 String node = (String) agentSpecificConfig.get("node");
                 Map<String, Object> nodeDefaults = null;
-                if (node != null) {
+                if (location == TemplateLocation.FIXED_NODE && node != null) {
                     nodeDefaults = (Map<String, Object>) yamlData.get(KEY_AGENT_DEFAULTS_PREFIX + node);
                     if (nodeDefaults == null) {
                         String msg = String.format(
@@ -197,13 +201,38 @@ public class ProxmoxConfigLoader {
 
     public ProxmoxTemplate createProxmoxTemplate(Map<String, Object> configMap) {
         String name = getRequiredStr(configMap, "name", "Agent template");
-        String node = getRequiredStr(configMap, "node", "Agent template '" + name + "'");
+        TemplateLocation templateLocation = configMap.containsKey("templateLocation")
+                ? parseEnum(TemplateLocation.class,
+                        getStr(configMap, "templateLocation", null), "templateLocation")
+                : TemplateLocation.FIXED_NODE;
+        String node = templateLocation == TemplateLocation.FIXED_NODE
+                ? getRequiredStr(configMap, "node", "Agent template '" + name + "'")
+                : getStr(configMap, "node", null);
         // Only required in the (default) static selection mode; validated after the mode is known.
         int templateVmId = getInt(configMap, "templateVmId", 0);
         String labelString = getStr(configMap, "labelString", "");
         int numExecutors = getInt(configMap, "numExecutors", 1);
 
         ProxmoxTemplate template = new ProxmoxTemplate(name, node, templateVmId, labelString, numExecutors);
+        template.setTemplateLocation(templateLocation);
+
+        if (configMap.containsKey("targetNodes")) {
+            Object rawTargetNodes = configMap.get("targetNodes");
+            if (!(rawTargetNodes instanceof List<?> values)) {
+                throw new IllegalArgumentException(
+                        "Agent template '" + name + "' field targetNodes must be a list");
+            }
+            List<String> targetNodes = values.stream().map(value -> value != null ? value.toString() : null).toList();
+            if (targetNodes.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Agent template '" + name + "' field targetNodes must not be empty");
+            }
+            template.setTargetNodes(targetNodes);
+            if (template.getRawTargetNodes().isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Agent template '" + name + "' field targetNodes must contain a node name");
+            }
+        }
 
         if (configMap.containsKey("templateSelectionMode")) {
             template.setTemplateSelectionMode(parseEnum(TemplateSelectionMode.class,
@@ -298,6 +327,21 @@ public class ProxmoxConfigLoader {
         if (configMap.containsKey("windowsLoginShell")) {
             template.setWindowsLoginShell(parseEnum(WindowsLoginShell.class,
                     getStr(configMap, "windowsLoginShell", null), "windowsLoginShell"));
+        }
+
+        if (template.getTemplateLocation() == TemplateLocation.EACH_TARGET_NODE
+                && template.getRawTargetNodes() == null) {
+            throw new IllegalArgumentException("Agent template '" + name
+                    + "' requires targetNodes when templateLocation is EACH_TARGET_NODE");
+        }
+        if (template.getTargetNodes().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Agent template '" + name + "' requires at least one targetNodes entry");
+        }
+        if (template.getTemplateLocation() == TemplateLocation.EACH_TARGET_NODE
+                && template.getTemplateSelectionMode() == TemplateSelectionMode.STATIC_ID) {
+            throw new IllegalArgumentException("Agent template '" + name
+                    + "': templateSelectionMode must be NAME_REGEX or TAG when templateLocation is EACH_TARGET_NODE");
         }
 
         switch (template.getTemplateSelectionMode()) {

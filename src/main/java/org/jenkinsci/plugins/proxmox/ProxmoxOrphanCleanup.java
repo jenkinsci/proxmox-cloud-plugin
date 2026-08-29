@@ -202,7 +202,10 @@ public class ProxmoxOrphanCleanup extends AsyncPeriodicWork {
         // so an agent on a node not covered by any template is still reconciled.
         Set<String> nodeNames = new LinkedHashSet<>();
         for (var template : cloud.getTemplates()) {
-            nodeNames.add(template.getNode());
+            if (template.getNode() != null && !template.getNode().isBlank()) {
+                nodeNames.add(template.getNode());
+            }
+            nodeNames.addAll(template.getTargetNodes());
         }
         for (ProxmoxAgent agent : agents) {
             nodeNames.add(agent.getProxmoxNode());

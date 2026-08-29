@@ -1,0 +1,10 @@
+<div>
+    Select the Proxmox cluster nodes where Jenkins may create agents from this template. Jenkins
+    chooses the selected online node with the fewest active or currently provisioning agents for
+    this cloud and template. Ties are resolved at random.
+</div>
+<div>
+    When Template Location is <b>Matching template on each agent node</b>, Jenkins uses a selected
+    node only when that node has a template matching the configured name regular expression or tag.
+    A node without a match is skipped until a matching template is available.
+</div>

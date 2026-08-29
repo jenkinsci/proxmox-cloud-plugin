@@ -8,6 +8,7 @@ import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Label;
 import hudson.model.Node;
+import hudson.model.TaskListener;
 import hudson.slaves.Cloud;
 import hudson.slaves.NodeProvisioner;
 import hudson.util.FormValidation;
@@ -19,8 +20,10 @@ import org.jenkinsci.plugins.cloudstats.CloudStatistics;
 import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
 import org.jenkinsci.plugins.cloudstats.TrackedPlannedNode;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxAuthenticationException;
+import org.jenkinsci.plugins.proxmox.api.ProxmoxAuthorizationException;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxClient;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
+import org.jenkinsci.plugins.proxmox.api.model.ClusterStatusEntry;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxCloudConfigSync;
 import org.jenkinsci.plugins.proxmox.config.ProxmoxTokenCredentials;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -29,16 +32,22 @@ import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.verb.POST;
 
 import jakarta.servlet.http.HttpServletResponse;
+import net.sf.json.JSONArray;
+import net.sf.json.JSONObject;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.IntUnaryOperator;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.kohsuke.stapler.HttpRedirect;
@@ -70,6 +79,13 @@ public class ProxmoxCloud extends Cloud {
     private transient volatile ProxmoxClient client;
     private transient volatile Object provisionLock;
     private transient volatile Set<Integer> reservedVmIds;
+    private transient volatile Map<PlacementKey, Integer> inFlightPlacements;
+
+    private record PlacementKey(String templateName, String targetNode) {
+    }
+
+    record ProvisioningReservation(int vmId, ProxmoxTemplate.ProvisioningCandidate candidate) {
+    }
 
     private static final DateTimeFormatter SYNC_TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -120,6 +136,20 @@ public class ProxmoxCloud extends Cloud {
         return reserved;
     }
 
+    private Map<PlacementKey, Integer> getInFlightPlacements() {
+        Map<PlacementKey, Integer> placements = inFlightPlacements;
+        if (placements == null) {
+            synchronized (this) {
+                placements = inFlightPlacements;
+                if (placements == null) {
+                    placements = new HashMap<>();
+                    inFlightPlacements = placements;
+                }
+            }
+        }
+        return placements;
+    }
+
     /**
      * Atomically reserve a free VM id for an imminent clone. {@link #getProvisionLock()} is held only
      * for the (fast) id lookup, not the clone/start, so concurrent provisions pick distinct ids yet
@@ -130,16 +160,83 @@ public class ProxmoxCloud extends Cloud {
     int reserveVmId() {
         ProxmoxClient apiClient = getClient();
         synchronized (getProvisionLock()) {
-            Set<Integer> reserved = getReservedVmIds();
-            int floor = startVmId;
-            for (int attempt = 0; attempt < 1000; attempt++) {
-                int id = apiClient.getNextVmId(floor);
-                if (reserved.add(id)) {
-                    return id;
-                }
-                floor = id + 1; // already reserved in-flight; search above it
+            return reserveVmIdLocked(apiClient);
+        }
+    }
+
+    private int reserveVmIdLocked(ProxmoxClient apiClient) {
+        Set<Integer> reserved = getReservedVmIds();
+        int floor = startVmId;
+        for (int attempt = 0; attempt < 1000; attempt++) {
+            int id = apiClient.getNextVmId(floor);
+            if (reserved.add(id)) {
+                return id;
             }
-            throw new ProxmoxException("Could not reserve a free VM id starting at " + startVmId);
+            floor = id + 1;
+        }
+        throw new ProxmoxException("Could not reserve a free VM id starting at " + startVmId);
+    }
+
+    ProvisioningReservation reserveProvision(ProxmoxTemplate template, TaskListener listener) {
+        List<ProxmoxTemplate.ProvisioningCandidate> candidates =
+                template.resolveProvisioningCandidates(getClient(), listener.getLogger());
+        synchronized (getProvisionLock()) {
+            int vmId = reserveVmIdLocked(getClient());
+            try {
+                Map<String, Integer> active = template.getActiveAgentCountsByNode(this);
+                Map<String, Integer> inFlight = new HashMap<>();
+                for (ProxmoxTemplate.ProvisioningCandidate candidate : candidates) {
+                    PlacementKey key = new PlacementKey(template.getName(), candidate.targetNode());
+                    inFlight.put(candidate.targetNode(), getInFlightPlacements().getOrDefault(key, 0));
+                }
+                ProxmoxTemplate.ProvisioningCandidate selected = selectCandidate(
+                        candidates, active, inFlight,
+                        bound -> ThreadLocalRandom.current().nextInt(bound));
+                PlacementKey key = new PlacementKey(template.getName(), selected.targetNode());
+                getInFlightPlacements().merge(key, 1, Integer::sum);
+                return new ProvisioningReservation(vmId, selected);
+            } catch (RuntimeException e) {
+                getReservedVmIds().remove(vmId);
+                throw e;
+            }
+        }
+    }
+
+    static ProxmoxTemplate.ProvisioningCandidate selectCandidate(
+            List<ProxmoxTemplate.ProvisioningCandidate> candidates,
+            Map<String, Integer> active,
+            Map<String, Integer> inFlight,
+            IntUnaryOperator randomIndex) {
+        if (candidates == null || candidates.isEmpty()) {
+            throw new ProxmoxException("No eligible Agent Node is available");
+        }
+        int minimum = candidates.stream()
+                .mapToInt(candidate -> active.getOrDefault(candidate.targetNode(), 0)
+                        + inFlight.getOrDefault(candidate.targetNode(), 0))
+                .min()
+                .orElseThrow();
+        List<ProxmoxTemplate.ProvisioningCandidate> tied = candidates.stream()
+                .filter(candidate -> active.getOrDefault(candidate.targetNode(), 0)
+                        + inFlight.getOrDefault(candidate.targetNode(), 0) == minimum)
+                .toList();
+        int index = randomIndex.applyAsInt(tied.size());
+        if (index < 0 || index >= tied.size()) {
+            throw new IllegalArgumentException("Random tie index is outside the candidate range");
+        }
+        return tied.get(index);
+    }
+
+    void releaseProvision(ProvisioningReservation reservation, ProxmoxTemplate template) {
+        synchronized (getProvisionLock()) {
+            getReservedVmIds().remove(reservation.vmId());
+            PlacementKey key = new PlacementKey(template.getName(), reservation.candidate().targetNode());
+            Map<PlacementKey, Integer> placements = getInFlightPlacements();
+            int remaining = placements.getOrDefault(key, 0) - 1;
+            if (remaining <= 0) {
+                placements.remove(key);
+            } else {
+                placements.put(key, remaining);
+            }
         }
     }
 
@@ -197,11 +294,12 @@ public class ProxmoxCloud extends Cloud {
                 // Each clone reserves its own id under a short lock, then clones/starts outside it, so
                 // multiple agents come up concurrently up to the cap rather than strictly serially.
                 Future<Node> future = Computer.threadPoolForRemoting.submit(() -> {
-                    int vmId = reserveVmId();
+                    ProvisioningReservation reservation = reserveProvision(t, TaskListener.NULL);
                     try {
-                        return t.provision(this, hudson.model.TaskListener.NULL, vmId, activityId);
+                        return t.provision(this, TaskListener.NULL, reservation.vmId(), activityId,
+                                reservation.candidate());
                     } finally {
-                        releaseVmId(vmId);
+                        releaseProvision(reservation, t);
                     }
                 });
                 planned.add(new TrackedPlannedNode(activityId, template.getNumExecutors(), future));
@@ -243,11 +341,12 @@ public class ProxmoxCloud extends Cloud {
             CloudStatistics.ProvisioningListener.get().onStarted(activityId);
             activityIds.add(activityId);
             futures.add(Computer.threadPoolForRemoting.submit(() -> {
-                int vmId = reserveVmId();
+                ProvisioningReservation reservation = reserveProvision(template, TaskListener.NULL);
                 try {
-                    return template.provision(this, hudson.model.TaskListener.NULL, vmId, activityId);
+                    return template.provision(this, TaskListener.NULL, reservation.vmId(), activityId,
+                            reservation.candidate());
                 } finally {
-                    releaseVmId(vmId);
+                    releaseProvision(reservation, template);
                 }
             }));
         }
@@ -332,11 +431,12 @@ public class ProxmoxCloud extends Cloud {
         CloudStatistics.ProvisioningListener.get().onStarted(activityId);
         try {
             ProxmoxAgent agent;
-            int vmId = reserveVmId();
+            ProvisioningReservation reservation = reserveProvision(t, TaskListener.NULL);
             try {
-                agent = t.provision(this, hudson.model.TaskListener.NULL, vmId, activityId);
+                agent = t.provision(this, TaskListener.NULL, reservation.vmId(), activityId,
+                        reservation.candidate());
             } finally {
-                releaseVmId(vmId);
+                releaseProvision(reservation, t);
             }
             // Rename the activity from the template name to the agent name (see provisionForMinimum).
             CloudStatistics.ProvisioningListener.get().onComplete(activityId, agent);
@@ -471,6 +571,33 @@ public class ProxmoxCloud extends Cloud {
     @Symbol("proxmox")
     public static class DescriptorImpl extends Descriptor<Cloud> {
 
+        enum ClusterInventoryState {
+            CLUSTER("cluster"),
+            STANDALONE("standalone"),
+            PERMISSION_MISSING("permission-missing"),
+            UNAVAILABLE("unavailable"),
+            UNCONFIGURED("unconfigured");
+
+            private final String jsonValue;
+
+            ClusterInventoryState(String jsonValue) {
+                this.jsonValue = jsonValue;
+            }
+        }
+
+        record ClusterInventoryNode(String name, boolean online) {
+        }
+
+        record ClusterInventory(
+                ClusterInventoryState state,
+                List<ClusterInventoryNode> nodes,
+                String message) {
+
+            ClusterInventory {
+                nodes = nodes != null ? List.copyOf(nodes) : List.of();
+            }
+        }
+
         @Override
         public String getDisplayName() {
             return "Proxmox VE";
@@ -515,10 +642,7 @@ public class ProxmoxCloud extends Cloud {
             }
 
             try {
-                ProxmoxTokenCredentials creds = CredentialsMatchers.firstOrNull(
-                        CredentialsProvider.lookupCredentialsInItemGroup(
-                                ProxmoxTokenCredentials.class, Jenkins.get(), null, Collections.emptyList()),
-                        CredentialsMatchers.withId(credentialsId));
+                ProxmoxTokenCredentials creds = findCredentials(credentialsId);
 
                 if (creds == null) {
                     return FormValidation.error("Credentials not found: " + credentialsId);
@@ -533,25 +657,146 @@ public class ProxmoxCloud extends Cloud {
                             "Connected to Proxmox VE %s - version %d+ is required",
                             version, MIN_PVE_VERSION);
                 }
+                List<String> warnings = new ArrayList<>();
                 if (majorVersion > MAX_KNOWN_PVE_VERSION) {
-                    return FormValidation.warning(
-                            "Connected to Proxmox VE %s - this plugin has been tested with PVE %d. "
-                            + "Please report any issues.", version, MAX_KNOWN_PVE_VERSION);
+                    warnings.add("this plugin has been tested with PVE " + MAX_KNOWN_PVE_VERSION
+                            + "; please report any issues");
                 }
-                return FormValidation.ok("Connected to Proxmox VE " + version);
+                try {
+                    classifyClusterStatus(testClient.getClusterStatus());
+                } catch (ProxmoxAuthorizationException e) {
+                    warnings.add("the token lacks Sys.Audit on /; existing fixed-node provisioning "
+                            + "remains available, but add Sys.Audit to configure cluster-aware placement");
+                } catch (ProxmoxAuthenticationException e) {
+                    throw e;
+                } catch (ProxmoxException e) {
+                    warnings.add("cluster topology could not be checked: " + e.getMessage());
+                }
+                String connected = "Connected to Proxmox VE " + version;
+                if (!warnings.isEmpty()) {
+                    return FormValidation.warning(connected + "; " + String.join("; ", warnings));
+                }
+                return FormValidation.ok(connected);
             } catch (ProxmoxAuthenticationException e) {
-                ProxmoxTokenCredentials creds = CredentialsMatchers.firstOrNull(
-                        CredentialsProvider.lookupCredentialsInItemGroup(
-                                ProxmoxTokenCredentials.class, Jenkins.get(), null, Collections.emptyList()),
-                        CredentialsMatchers.withId(credentialsId));
+                ProxmoxTokenCredentials creds = findCredentials(credentialsId);
                 String tokenId = creds != null ? creds.getTokenId() : "unknown";
                 return FormValidation.error(
                         "Authentication failed (token ID: " + tokenId + "). "
                         + "Verify with: curl -k -H 'Authorization: PVEAPIToken="
                         + tokenId + "=<secret>' " + apiUrl + "/api2/json/version");
+            } catch (ProxmoxAuthorizationException e) {
+                return FormValidation.error("Permission denied while testing the Proxmox connection: "
+                        + e.getMessage());
             } catch (ProxmoxException e) {
                 return FormValidation.error("Connection failed: " + e.getMessage());
             }
+        }
+
+        @POST
+        public HttpResponse doClusterInventory(
+                @QueryParameter String apiUrl,
+                @QueryParameter String credentialsId,
+                @QueryParameter boolean ignoreSslErrors) {
+            Jenkins.get().checkPermission(Jenkins.ADMINISTER);
+            return jsonResponse(clusterInventory(apiUrl, credentialsId, ignoreSslErrors));
+        }
+
+        ClusterInventory clusterInventory(
+                String apiUrl, String credentialsId, boolean ignoreSslErrors) {
+            if (apiUrl == null || apiUrl.isBlank()
+                    || credentialsId == null || credentialsId.isBlank()) {
+                return new ClusterInventory(
+                        ClusterInventoryState.UNCONFIGURED, List.of(),
+                        "Configure the API URL and credentials to detect Proxmox topology.");
+            }
+            ProxmoxTokenCredentials creds = findCredentials(credentialsId);
+            if (creds == null) {
+                return new ClusterInventory(
+                        ClusterInventoryState.UNAVAILABLE, List.of(),
+                        "The configured Proxmox credentials were not found.");
+            }
+            try {
+                ProxmoxClient client = new ProxmoxClient(
+                        apiUrl, creds.getTokenId(), creds.getTokenSecret(), ignoreSslErrors);
+                return classifyClusterStatus(client.getClusterStatus());
+            } catch (ProxmoxAuthorizationException e) {
+                return new ClusterInventory(
+                        ClusterInventoryState.PERMISSION_MISSING, List.of(),
+                        "The Proxmox token lacks Sys.Audit on /. Jenkins cannot determine whether "
+                        + "this endpoint is standalone or clustered. Existing placement is preserved, "
+                        + "but Template Location and Agent Nodes are read-only. Add Sys.Audit at / "
+                        + "and reload this page to edit cluster-aware placement.");
+            } catch (ProxmoxAuthenticationException e) {
+                return new ClusterInventory(
+                        ClusterInventoryState.UNAVAILABLE, List.of(),
+                        "Proxmox authentication failed. Check the configured API token.");
+            } catch (ProxmoxException e) {
+                return new ClusterInventory(
+                        ClusterInventoryState.UNAVAILABLE, List.of(),
+                        "Cluster topology is unavailable: " + e.getMessage());
+            }
+        }
+
+        static ClusterInventory classifyClusterStatus(List<ClusterStatusEntry> entries) {
+            if (entries == null || entries.isEmpty()) {
+                throw new ProxmoxException("Proxmox returned no cluster status entries");
+            }
+            List<ClusterInventoryNode> nodes = entries.stream()
+                    .filter(entry -> entry != null && "node".equals(entry.type()))
+                    .filter(entry -> entry.name() != null && !entry.name().isBlank())
+                    .map(entry -> new ClusterInventoryNode(
+                            entry.name(), entry.online() != null && entry.online() == 1))
+                    .toList();
+            boolean clustered = entries.stream()
+                    .anyMatch(entry -> entry != null && "cluster".equals(entry.type()));
+            if (clustered) {
+                if (nodes.isEmpty()) {
+                    throw new ProxmoxException("Cluster status did not include any member nodes");
+                }
+                return new ClusterInventory(ClusterInventoryState.CLUSTER, nodes, "");
+            }
+
+            List<ClusterStatusEntry> localNodes = entries.stream()
+                    .filter(entry -> entry != null && "node".equals(entry.type()))
+                    .filter(entry -> entry.local() != null && entry.local() == 1)
+                    .filter(entry -> entry.name() != null && !entry.name().isBlank())
+                    .toList();
+            if (nodes.size() != 1 || localNodes.size() != 1) {
+                throw new ProxmoxException(
+                        "Cluster status did not identify exactly one standalone local node");
+            }
+            return new ClusterInventory(ClusterInventoryState.STANDALONE, nodes, "");
+        }
+
+        private static ProxmoxTokenCredentials findCredentials(String credentialsId) {
+            return CredentialsMatchers.firstOrNull(
+                    CredentialsProvider.lookupCredentialsInItemGroup(
+                            ProxmoxTokenCredentials.class, Jenkins.get(), null, Collections.emptyList()),
+                    CredentialsMatchers.withId(credentialsId));
+        }
+
+        private static HttpResponse jsonResponse(ClusterInventory inventory) {
+            JSONObject json = new JSONObject();
+            json.put("state", inventory.state().jsonValue);
+            json.put("message", inventory.message());
+            JSONArray nodes = new JSONArray();
+            for (ClusterInventoryNode inventoryNode : inventory.nodes()) {
+                JSONObject node = new JSONObject();
+                node.put("name", inventoryNode.name());
+                node.put("online", inventoryNode.online());
+                nodes.add(node);
+            }
+            json.put("nodes", nodes);
+            return new HttpResponse() {
+                @Override
+                public void generateResponse(
+                        org.kohsuke.stapler.StaplerRequest2 req,
+                        org.kohsuke.stapler.StaplerResponse2 rsp,
+                        Object node) throws java.io.IOException, jakarta.servlet.ServletException {
+                    rsp.setContentType("application/json;charset=UTF-8");
+                    rsp.getWriter().write(json.toString());
+                }
+            };
         }
 
         @POST

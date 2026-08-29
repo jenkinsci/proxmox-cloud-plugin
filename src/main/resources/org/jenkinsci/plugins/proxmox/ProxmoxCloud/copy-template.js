@@ -152,9 +152,10 @@ Behaviour.specify(
                 if (tag === "input" && (type === "checkbox" || type === "radio")) {
                     var group = dst.querySelectorAll('input[name="' + name + '"]');
                     var match = null;
-                    if (type === "radio") {
+                    if (type === "radio" || sf.hasAttribute("json")) {
                         for (var r = 0; r < group.length; r++) {
-                            if (group[r].value === sf.value) {
+                            if (group[r].value === sf.value
+                                    && group[r].getAttribute("json") === sf.getAttribute("json")) {
                                 match = group[r];
                                 break;
                             }

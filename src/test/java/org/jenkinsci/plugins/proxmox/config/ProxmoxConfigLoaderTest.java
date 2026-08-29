@@ -237,6 +237,8 @@ class ProxmoxConfigLoaderTest {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("name", "linux-builder");
         config.put("node", "pve1");
+        config.put("templateLocation", "FIXED_NODE");
+        config.put("targetNodes", List.of("pve1", "pve2"));
         config.put("templateVmId", 9000);
         config.put("labelString", "linux docker");
         config.put("numExecutors", 2);
@@ -268,6 +270,8 @@ class ProxmoxConfigLoaderTest {
 
         assertEquals("linux-builder", template.getName());
         assertEquals("pve1", template.getNode());
+        assertEquals(TemplateLocation.FIXED_NODE, template.getTemplateLocation());
+        assertEquals(List.of("pve1", "pve2"), template.getTargetNodes());
         assertEquals(9000, template.getTemplateVmId());
         assertEquals("linux docker", template.getLabelString());
         assertEquals(2, template.getNumExecutors());
@@ -360,6 +364,59 @@ class ProxmoxConfigLoaderTest {
     }
 
     @Test
+    void createProxmoxTemplate_localTagModeDoesNotRequireTemplateNode() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "local");
+        config.put("templateLocation", "EACH_TARGET_NODE");
+        config.put("targetNodes", List.of("pve1", " pve2 ", "pve1"));
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+        config.put("templateSelectionMode", "TAG");
+        config.put("templateTag", "jenkins-local");
+
+        ProxmoxTemplate template = loader.createProxmoxTemplate(config);
+
+        assertNull(template.getNode());
+        assertEquals(TemplateLocation.EACH_TARGET_NODE, template.getTemplateLocation());
+        assertEquals(List.of("pve1", "pve2"), template.getTargetNodes());
+        assertEquals(TemplateSelectionMode.TAG, template.getTemplateSelectionMode());
+    }
+
+    @Test
+    void createProxmoxTemplate_localModeRequiresTargetsAndDynamicSelection() {
+        Map<String, Object> localTag = new LinkedHashMap<>();
+        localTag.put("name", "local");
+        localTag.put("templateLocation", "EACH_TARGET_NODE");
+        localTag.put("labelString", "linux");
+        localTag.put("numExecutors", 1);
+        localTag.put("templateSelectionMode", "TAG");
+        localTag.put("templateTag", "jenkins-local");
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(localTag));
+
+        localTag.put("targetNodes", List.of("pve1"));
+        localTag.put("templateSelectionMode", "STATIC_ID");
+        localTag.put("templateVmId", 9000);
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(localTag));
+    }
+
+    @Test
+    void createProxmoxTemplate_rejectsEmptyOrBlankTargetLists() {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("name", "fixed");
+        config.put("node", "pve1");
+        config.put("templateVmId", 9000);
+        config.put("labelString", "linux");
+        config.put("numExecutors", 1);
+
+        config.put("targetNodes", List.of());
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(config));
+        config.put("targetNodes", List.of(" "));
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(config));
+        config.put("targetNodes", "pve1");
+        assertThrows(IllegalArgumentException.class, () -> loader.createProxmoxTemplate(config));
+    }
+
+    @Test
     void createProxmoxTemplate_nameRegexModeMissingRegexThrows() {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("name", "dyn");
@@ -423,6 +480,9 @@ class ProxmoxConfigLoaderTest {
 
         assertEquals("basic", template.getName());
         assertEquals("pve1", template.getNode());
+        assertEquals(TemplateLocation.FIXED_NODE, template.getTemplateLocation());
+        assertEquals(List.of("pve1"), template.getTargetNodes());
+        assertNull(template.getRawTargetNodes());
         assertEquals(9000, template.getTemplateVmId());
         // Verify class defaults are preserved
         assertEquals(CloneStrategy.FULL, template.getCloneStrategy());
