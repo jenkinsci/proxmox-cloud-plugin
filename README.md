@@ -769,9 +769,10 @@ The built plugin is at `target/proxmox-cloud.hpi`.
 
 ## Contributing
 
-Bug reports and feature requests go to the
-[GitHub issue tracker](https://github.com/jenkinsci/proxmox-cloud-plugin/issues). See
-[CONTRIBUTING.md](CONTRIBUTING.md) for build instructions and the pull request process.
+Bug reports and feature requests are welcome on the
+[GitHub issue tracker](https://github.com/jenkinsci/proxmox-cloud-plugin/issues). The project is not
+accepting pull requests at this time. See [CONTRIBUTING.md](CONTRIBUTING.md) for issue-reporting
+guidance and build instructions.
 
 ## License
 
