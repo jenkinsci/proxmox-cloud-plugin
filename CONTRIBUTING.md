@@ -1,10 +1,16 @@
 # Contributing
 
-Thanks for your interest in the Proxmox Cloud plugin. Bug reports, feature requests, and pull requests are all welcome.
+Thanks for your interest in the Proxmox Cloud plugin. Bug reports and feature requests are welcome.
+The project is not accepting pull requests at this time.
 
 ## Reporting issues
 
-File issues at https://github.com/jenkinsci/proxmox-cloud-plugin/issues. For bugs, include the Jenkins version, the plugin version, the Proxmox VE version, and the relevant controller and agent logs. Agent provisioning and lifecycle decisions are logged under `org.jenkinsci.plugins.proxmox`; a System Log recorder for that logger at `FINE` captures the useful detail.
+File bug reports and feature requests at the
+[GitHub issue tracker](https://github.com/jenkinsci/proxmox-cloud-plugin/issues). For bugs, include
+the Jenkins version, the plugin version, the Proxmox VE version, and the relevant controller and
+agent logs. Agent provisioning and lifecycle decisions are logged under
+`org.jenkinsci.plugins.proxmox`; a System Log recorder for that logger at `FINE` captures the useful
+detail. For feature requests, describe the problem, the desired outcome, and the relevant use case.
 
 ## Building
 
@@ -33,12 +39,9 @@ Tests use JUnit 5 (Jupiter) with the Jenkins test harness and WireMock for the P
 
 ## Pull requests
 
-Pull requests are only considered after an issue has been filed and agreement has been reached with the maintainers that it describes a confirmed bug or accepted feature. PRs that skip this step will not be reviewed or merged.
-
-- Branch from `main` and open the PR against `main`.
-- Keep each PR to one logical change.
-- Match the surrounding code style. `mvn verify` runs Spotless, SpotBugs, and the enforcer rules, so run it before pushing.
-- Label the PR to reflect the change (`enhancement`, `bug`, `developer`, and so on). Release notes are drafted from PR titles and labels.
+The project is not accepting pull requests at this time. Please open a bug report or feature
+request instead of submitting a pull request. This gives the maintainers the context needed to
+evaluate the request and track any resulting work.
 
 ## Releases
 
