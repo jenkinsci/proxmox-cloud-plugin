@@ -6,7 +6,9 @@ import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
 import com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import hudson.model.Node;
+import hudson.model.TaskListener;
 import hudson.plugins.sshslaves.SSHLauncher;
+import hudson.slaves.SlaveComputer;
 import hudson.util.Secret;
 import org.jenkinsci.plugins.proxmox.api.ProxmoxException;
 import org.jenkinsci.plugins.proxmox.config.JavaDistribution;
@@ -20,10 +22,13 @@ import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.List;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -55,6 +60,52 @@ class ProxmoxLauncherSshTest {
 
     private static ProxmoxLauncher launcher(JavaDistribution dist) {
         return new ProxmoxLauncher("ssh-cred", "java", "", 1, null, dist, 21, null);
+    }
+
+    @Test
+    void launchCreatesAndStartsDelegateAfterSshPreparation() throws Exception {
+        String host = "192.0.2.10";
+        List<String> steps = new ArrayList<>();
+        SSHLauncher delegate = new SSHLauncher(host, 22, "ssh-cred") {
+            @Override
+            public void launch(SlaveComputer computer, TaskListener listener) {
+                steps.add("launch");
+            }
+        };
+        ProxmoxLauncher launcher = new ProxmoxLauncher(
+                "ssh-cred", "java", "", 60, host, JavaDistribution.NONE, 21, null) {
+            @Override
+            void waitForSsh(String actualHost, PrintStream log) {
+                assertEquals(host, actualHost);
+                steps.add("tcp");
+            }
+
+            @Override
+            void waitForSshReady(String actualHost, PrintStream log) {
+                assertEquals(host, actualHost);
+                steps.add("auth");
+            }
+
+            @Override
+            SSHLauncher createDelegate(String actualHost) {
+                assertEquals(host, actualHost);
+                steps.add("create");
+                return delegate;
+            }
+        };
+        ProxmoxAgent agent = new ProxmoxAgent("launch-orchestration", "/home/jenkins", 1,
+                Node.Mode.NORMAL, "linux", launcher, "test-cloud", "test-template", "pve1",
+                370, 10, 0, null);
+        ProxmoxComputer computer = new ProxmoxComputer(agent) {
+            @Override
+            public ProxmoxAgent getNode() {
+                return agent;
+            }
+        };
+
+        launcher.launch(computer, TaskListener.NULL);
+
+        assertEquals(List.of("tcp", "auth", "create", "launch"), steps);
     }
 
     /** A fake SSH session that records nothing beyond the canned auth result and exit status. */
@@ -461,14 +512,27 @@ class ProxmoxLauncherSshTest {
 
     @Test
     void resolveLoginShellAutoThenWrapsWhenPowershellDetected() throws Exception {
-        // Full AUTO path: probe detects PS 5.x (token only in stderr) -> configureDelegate wraps.
+        // Full AUTO path: probe detects PS 5.x -> the PowerShell-aware delegate reports the
+        // environment correctly and wraps the agent start command.
         registerPasswordCredential();
         ProxmoxLauncher launcher = launcherAuto();
         launcher.setSshConnectionFactory(execFactory("", "parse error + echo " + ProxmoxLauncher.SHELL_PROBE_TOKEN, 1));
         launcher.resolveLoginShell("1.2.3.4", nullLog());
-        SSHLauncher d = new SSHLauncher("1.2.3.4", 22, "ssh-cred");
+        SSHLauncher d = launcher.createDelegate("1.2.3.4");
         launcher.configureDelegate(d);
+        assertInstanceOf(PowerShellEnvironmentSSHLauncher.class, d);
         assertEquals("cmd /c '", d.getPrefixStartSlaveCmd());
         assertEquals("'", d.getSuffixStartSlaveCmd());
+    }
+
+    @Test
+    void resolveLoginShellAutoThenUsesDefaultDelegateWhenAndAndAccepted() throws Exception {
+        registerPasswordCredential();
+        ProxmoxLauncher launcher = launcherAuto();
+        launcher.setSshConnectionFactory(execFactory(
+                "probe\n" + ProxmoxLauncher.SHELL_PROBE_TOKEN + "\n", "", 0));
+        launcher.resolveLoginShell("1.2.3.4", nullLog());
+
+        assertEquals(SSHLauncher.class, launcher.createDelegate("1.2.3.4").getClass());
     }
 }

@@ -135,7 +135,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
 
             resolveLoginShell(host, log);
 
-            delegate = new SSHLauncher(host, SSH_PORT, sshCredentialsId);
+            delegate = createDelegate(host);
             configureDelegate(delegate);
             delegate.launch(computer, listener);
         } catch (IOException | InterruptedException | RuntimeException e) {
@@ -206,7 +206,7 @@ public class ProxmoxLauncher extends ComputerLauncher {
         // wrapping it as cmd /c '<command>' (prefix + suffix) routes it through cmd for that shell.
         // Prefer the shell resolved at launch (AUTO -> CMD/POWERSHELL); fall back to the constructor
         // value so direct-call unit tests (no launch()) still see an explicit shell's wrapper.
-        WindowsLoginShell effective = resolvedLoginShell != null ? resolvedLoginShell : windowsLoginShell;
+        WindowsLoginShell effective = effectiveLoginShell();
         if (effective != null) {
             if (!effective.getStartCommandPrefix().isBlank()) {
                 launcher.setPrefixStartSlaveCmd(effective.getStartCommandPrefix());
@@ -215,6 +215,23 @@ public class ProxmoxLauncher extends ComputerLauncher {
                 launcher.setSuffixStartSlaveCmd(effective.getStartCommandSuffix());
             }
         }
+    }
+
+    /**
+     * Construct the SSH Build Agents delegate appropriate for the resolved login shell. Windows
+     * PowerShell 5.x needs a PowerShell-compatible environment-report command in addition to the
+     * existing {@code cmd /c} start-command wrapper. All other shells retain the upstream delegate
+     * unchanged. Package-private for unit testing.
+     */
+    SSHLauncher createDelegate(String host) {
+        if (effectiveLoginShell() == WindowsLoginShell.POWERSHELL) {
+            return new PowerShellEnvironmentSSHLauncher(host, SSH_PORT, sshCredentialsId);
+        }
+        return new SSHLauncher(host, SSH_PORT, sshCredentialsId);
+    }
+
+    private WindowsLoginShell effectiveLoginShell() {
+        return resolvedLoginShell != null ? resolvedLoginShell : windowsLoginShell;
     }
 
     @Override
