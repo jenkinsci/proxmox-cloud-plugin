@@ -85,6 +85,20 @@ well; [Windows agents](#windows-agents) replaces steps 2 and 5.
 
 Create a dedicated user, role, and API token on your Proxmox host.
 
+#### Upgrading existing installations
+
+Existing installations must add `Sys.Audit` to the role used by this plugin before upgrading to a
+release with cluster-aware placement:
+
+```bash
+pveum role modify JenkinsProvisioner --append --privs Sys.Audit
+```
+
+This preserves the role's existing privileges. `Sys.Audit` must be effective at `/`. If the
+`JenkinsProvisioner` role is already assigned at `/` as shown below, no ACL change or token rotation
+is needed. If VM permissions are deliberately scoped below `/`, grant `Sys.Audit` at `/` through a
+separate read-only role instead of broadening the VM permissions.
+
 Proxmox v9.x
 ```bash
 # Create a role with minimum required privileges
